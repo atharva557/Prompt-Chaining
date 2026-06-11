@@ -1,4 +1,18 @@
+import difflib
+
 import streamlit as st
+
+
+def _build_diff(original: str, refined: str) -> str:
+    """Unified diff between the raw idea and the refined prompt."""
+    diff = difflib.unified_diff(
+        original.splitlines(),
+        refined.splitlines(),
+        fromfile="your idea",
+        tofile="refined prompt",
+        lineterm="",
+    )
+    return "\n".join(diff)
 
 
 def render_prompt_review():
@@ -29,6 +43,17 @@ def render_prompt_review():
     )
 
     st.caption("You can edit this prompt before sending it to the Coder model.")
+
+    # ── Diff: what the Prompter changed ──
+    with st.expander("Diff — your idea vs. refined prompt", expanded=False):
+        diff_text = _build_diff(
+            st.session_state.get("task_description", ""),
+            edited_prompt,
+        )
+        if diff_text:
+            st.code(diff_text, language="diff")
+        else:
+            st.caption("No differences.")
 
     # ── Action Buttons ──
     col1, col_spacer, col2 = st.columns([1, 1, 1])

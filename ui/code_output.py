@@ -159,10 +159,12 @@ def render_copy_button(code: str):
 def render_code_output():
     """
     Render the final output page: prompt and code side by side,
-    with save / copy / regenerate actions.
+    with save / copy / regenerate / refine actions.
     Returns:
         'start_over' if user clicks Start over,
         'regenerate' if user wants to re-run the coder with the edited prompt,
+        'refine' if user wants a follow-up pass over the current code
+            (instruction stored in st.session_state['refine_instruction']),
         None otherwise.
     """
     st.markdown("## Result")
@@ -203,6 +205,32 @@ def render_code_output():
     if regenerate:
         st.session_state["generated_prompt"] = edited_prompt
         return "regenerate"
+
+    # ── Refine: follow-up instruction sent with the current code ──
+    st.markdown("#### Refine")
+    refine_text = st.text_area(
+        "Follow-up instruction",
+        placeholder=(
+            "e.g., Make the board bigger, add a restart button, "
+            "fix the score reset bug"
+        ),
+        height=80,
+        key="refine_instruction_area",
+        label_visibility="collapsed",
+    )
+    refine_clicked = st.button(
+        "Refine code",
+        key="refine_code_btn",
+        disabled=(not refine_text or not refine_text.strip()),
+        help=(
+            "Sends the current code plus this instruction back to the "
+            "Coder, which edits in place instead of starting over"
+        ),
+    )
+
+    if refine_clicked and refine_text and refine_text.strip():
+        st.session_state["refine_instruction"] = refine_text.strip()
+        return "refine"
 
     # ── Filename & Save ──
     st.markdown("---")

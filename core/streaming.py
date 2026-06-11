@@ -17,18 +17,23 @@ CODER_TIMEOUT = 900      # 15 minutes for larger coder models
 def stream_completion(
     base_url: str,
     model: str,
-    system_prompt: str,
-    user_message: str,
+    system_prompt: str = "",
+    user_message: str = "",
     temperature: float = 0.3,
     max_tokens: int = 1024,
     backend: str = "lmstudio",
     timeout: int = CODER_TIMEOUT,
+    messages: list[dict] | None = None,
 ) -> Generator[str, None, None]:
     """
     Generator that yields text tokens as they arrive via SSE streaming.
 
     Uses the OpenAI-compatible /v1/chat/completions endpoint with stream=True.
-    Both LM Studio and Ollama support this format.
+    LM Studio, Ollama, and any custom OpenAI-compatible server use this format.
+
+    Pass either system_prompt + user_message (single-turn), or a full
+    `messages` list for multi-turn conversations (chat, code refinement);
+    `messages` takes precedence when provided.
 
     Yields:
         str: Individual text tokens as they arrive.
@@ -40,12 +45,15 @@ def stream_completion(
     """
     base_url = base_url.rstrip("/")
 
-    payload = {
-        "model": model,
-        "messages": [
+    if messages is None:
+        messages = [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_message},
-        ],
+        ]
+
+    payload = {
+        "model": model,
+        "messages": messages,
         "temperature": temperature,
         "max_tokens": max_tokens,
         "stream": True,

@@ -10,7 +10,7 @@ import time
 import streamlit as st
 
 from core.config import config_exists, load_config
-from core.api import test_connection, unload_model
+from core.api import test_connection, unload_model, BACKEND_LABELS
 from core.history import load_history, add_entry, delete_entry, clear_history
 from core.streaming import stream_completion, PROMPTER_TIMEOUT, CODER_TIMEOUT
 from ui.styles import (
@@ -24,6 +24,8 @@ from ui.settings import render_settings
 from ui.task_input import render_task_input, DEFAULT_PROMPTER_SYSTEM, DEFAULT_CODER_SYSTEM
 from ui.prompt_review import render_prompt_review
 from ui.code_output import render_code_output
+from ui.landing import render_landing
+from ui.chat import render_chat
 
 # ═══════════════════════════════════════════════════════
 #  Page Config
@@ -55,6 +57,8 @@ STEP_CODE_OUTPUT = 3
 def init_session_state():
     """Initialize all session state keys with defaults."""
     defaults = {
+        # Top-level page: 'landing' | 'pipeline' | 'chat_prompter' | 'chat_coder'
+        "page": "landing",
         "current_step": STEP_TASK_INPUT,
         "task_description": "",
         "generated_prompt": "",
@@ -73,10 +77,17 @@ def init_session_state():
         "coder_pending": False,
         "coder_error": "",
         "coder_partial": "",
+        # 'full' = prompt → code; 'refine' = multi-turn follow-up that sends
+        # the previous code + an instruction so the coder edits in place
+        "coder_mode": "full",
+        "refine_instruction": "",
         # True after the prompter has run, so the coder step knows a
         # VRAM swap is actually needed (regenerating from the output
         # page skips the pointless unload).
         "needs_swap": False,
+        # Which role's model most recently handled a request (pipeline or
+        # chat), so all generation paths can swap VRAM cooperatively.
+        "last_model_role": None,
     }
     for key, value in defaults.items():
         if key not in st.session_state:
@@ -95,6 +106,8 @@ def reset_pipeline():
     st.session_state["coder_pending"] = False
     st.session_state["coder_error"] = ""
     st.session_state["coder_partial"] = ""
+    st.session_state["coder_mode"] = "full"
+    st.session_state["refine_instruction"] = ""
     st.session_state["needs_swap"] = False
     st.session_state["show_settings"] = False
     # Drop widget state so inputs re-initialize cleanly
@@ -104,6 +117,7 @@ def reset_pipeline():
         "output_prompt_area",
         "output_filename",
         "output_folder_display",
+        "refine_instruction_area",
     ):
         st.session_state.pop(key, None)
 
@@ -115,6 +129,7 @@ def load_history_entry(entry: dict):
     st.session_state["generated_prompt"] = entry.get("prompt", "")
     st.session_state["generated_code"] = entry.get("code", "")
     st.session_state["current_step"] = STEP_CODE_OUTPUT
+    st.session_state["page"] = "pipeline"
 
 # ═══════════════════════════════════════════════════════
 #  Load Config
@@ -146,8 +161,21 @@ def _check_connection(base_url: str, backend: str) -> bool:
 with st.sidebar:
     st.markdown("# PromptChain")
 
+    if st.button("Home", key="nav_home_btn", use_container_width=True):
+        st.session_state["page"] = "landing"
+        st.rerun()
+
     if st.button("＋ New task", key="new_task_btn", use_container_width=True):
         reset_pipeline()
+        st.session_state["page"] = "pipeline"
+        st.rerun()
+
+    if st.button("Prompter chat", key="nav_chat_prompter_btn", use_container_width=True):
+        st.session_state["page"] = "chat_prompter"
+        st.rerun()
+
+    if st.button("Coder chat", key="nav_chat_coder_btn", use_container_width=True):
+        st.session_state["page"] = "chat_coder"
         st.rerun()
 
     render_divider()
@@ -221,8 +249,7 @@ with st.sidebar:
 
     # Backend indicator
     backend = config.get("backend", "lmstudio")
-    backend_label = "LM Studio" if backend == "lmstudio" else "Ollama"
-    st.caption(f"Backend: {backend_label}")
+    st.caption(f"Backend: {BACKEND_LABELS.get(backend, backend)}")
 
 # ═══════════════════════════════════════════════════════
 #  Main Content
@@ -231,15 +258,35 @@ with st.sidebar:
 if st.session_state.pop("_settings_saved_toast", False):
     st.toast("Settings saved")
 
+if st.session_state.pop("_gen_stopped_toast", False):
+    st.toast("Generation stopped")
+
 # --- Settings Page ---
 if st.session_state["show_settings"]:
     render_settings()
     st.stop()
 
-# --- Check if config is valid ---
+# --- Landing Page (works even before models are configured) ---
+if st.session_state["page"] == "landing":
+    landing_action = render_landing(config)
+    if landing_action:
+        st.session_state["page"] = landing_action
+        st.rerun()
+    st.stop()
+
+# --- Check if config is valid (pipeline and chats need models) ---
 if not config.get("prompter_model") or not config.get("coder_model"):
     st.warning("Please configure your models in Settings before starting.")
     render_settings()
+    st.stop()
+
+# --- Chat Pages ---
+if st.session_state["page"] == "chat_prompter":
+    render_chat("prompter", config)
+    st.stop()
+
+if st.session_state["page"] == "chat_coder":
+    render_chat("coder", config)
     st.stop()
 
 # --- Step Indicator ---
@@ -259,6 +306,8 @@ def run_streaming_generation(
     display_mode: str = "text",
     timeout: int = CODER_TIMEOUT,
     on_first_token=None,
+    messages: list[dict] | None = None,
+    partial_key: str | None = None,
 ):
     """
     Run a streaming generation and display output in real-time.
@@ -273,6 +322,11 @@ def run_streaming_generation(
         timeout: Request timeout in seconds (180s for prompter, 900s for coder).
         on_first_token: Optional callback invoked when the first token arrives
             (the model is actually loaded at that point).
+        messages: Optional full message list for multi-turn calls (refine mode);
+            overrides system_prompt/user_message when provided.
+        partial_key: Optional session-state key to write partial output to on
+            every chunk, so a user-initiated Stop (which kills the script
+            mid-loop) doesn't lose what was already generated.
 
     Returns:
         tuple: (full_output: str, error: str). error is empty on success.
@@ -292,6 +346,7 @@ def run_streaming_generation(
             max_tokens=max_tokens,
             backend=config.get("backend", "lmstudio"),
             timeout=timeout,
+            messages=messages,
         )
 
         # Create a placeholder for streaming output
@@ -304,6 +359,8 @@ def run_streaming_generation(
                     on_first_token()
             chunk_count += 1
             full_output += token
+            if partial_key:
+                st.session_state[partial_key] = full_output
             if display_mode == "code":
                 output_placeholder.code(full_output, line_numbers=True)
             else:
@@ -370,8 +427,26 @@ def render_pipeline_checklist(stages: list[dict]):
     st.markdown(html, unsafe_allow_html=True)
 
 
+def _stop_prompter():
+    """on_click for the Stop button shown while the prompter streams.
+    The click itself interrupts the running script at its next placeholder
+    update; this callback just records the consequences."""
+    st.session_state["_gen_stopped_toast"] = True
+    st.session_state["needs_swap"] = True  # the prompter is loaded now
+
+
 def run_prompter(status_placeholder) -> tuple[str, str]:
     """Stream the prompter model. Returns (result, error)."""
+
+    # A coder model left loaded by a chat or an earlier run would fight
+    # the prompter for VRAM — evict it first.
+    if st.session_state.get("last_model_role") == "coder":
+        unload_model(
+            config["base_url"],
+            config["coder_model"],
+            config.get("backend", "lmstudio"),
+        )
+    st.session_state["last_model_role"] = "prompter"
 
     def show_status(loaded: bool):
         with status_placeholder.container():
@@ -412,6 +487,7 @@ if st.session_state["current_step"] == STEP_TASK_INPUT:
     if should_generate or retry_requested:
         st.session_state["is_running"] = True
         status_placeholder = st.empty()
+        st.button("Stop", key="stop_prompter_btn", on_click=_stop_prompter)
 
         result, error = run_prompter(status_placeholder)
         st.session_state["is_running"] = False
@@ -449,6 +525,7 @@ elif st.session_state["current_step"] == STEP_PROMPT_REVIEW:
     if action == "retry":
         st.session_state["is_running"] = True
         status_placeholder = st.empty()
+        st.button("Stop", key="stop_prompter_retry_btn", on_click=_stop_prompter)
 
         result, error = run_prompter(status_placeholder)
         st.session_state["is_running"] = False
@@ -473,6 +550,7 @@ elif st.session_state["current_step"] == STEP_PROMPT_REVIEW:
     elif action == "confirm":
         st.session_state["current_step"] = STEP_GENERATING
         st.session_state["coder_pending"] = True
+        st.session_state["coder_mode"] = "full"
         st.session_state["coder_error"] = ""
         st.session_state["coder_partial"] = ""
         st.rerun()
@@ -491,7 +569,15 @@ elif st.session_state["current_step"] == STEP_GENERATING:
     def _back_to_prompt():
         st.session_state["coder_error"] = ""
         st.session_state["coder_partial"] = ""
+        st.session_state["coder_mode"] = "full"
         st.session_state["current_step"] = STEP_PROMPT_REVIEW
+
+    def _stop_coder():
+        # The click interrupts the streaming loop; the progressive
+        # coder_partial writes preserve what was generated so far, and the
+        # rerun lands in the stable error view below.
+        st.session_state["coder_error"] = "Stopped by user."
+        st.session_state["_gen_stopped_toast"] = True
 
     # Generation only runs when explicitly requested via the one-shot flag.
     # Reruns triggered by button clicks land in the branches below instead
@@ -537,7 +623,36 @@ elif st.session_state["current_step"] == STEP_GENERATING:
                     {"label": "Generating code...", "state": "running"},
                 ])
 
+        st.button("Stop", key="stop_coder_btn", on_click=_stop_coder)
         st.markdown("### Coder output")
+
+        # Refine mode: multi-turn call with the previous prompt + code +
+        # the follow-up instruction, so the coder edits in place instead
+        # of regenerating from scratch.
+        refine_mode = (
+            st.session_state.get("coder_mode") == "refine"
+            and st.session_state.get("generated_code")
+        )
+        if refine_mode:
+            coder_messages = [
+                {"role": "system", "content": st.session_state["coder_system"]},
+                {"role": "user", "content": st.session_state["generated_prompt"]},
+                {"role": "assistant", "content": st.session_state["generated_code"]},
+                {
+                    "role": "user",
+                    "content": (
+                        "Update the code above according to the following "
+                        "instructions. Output the complete updated code in a "
+                        "single fenced code block — no diffs, no omitted "
+                        "sections.\n\n"
+                        + st.session_state.get("refine_instruction", "")
+                    ),
+                },
+            ]
+        else:
+            coder_messages = None
+
+        st.session_state["last_model_role"] = "coder"
 
         result, error = run_streaming_generation(
             model_key="coder_model",
@@ -548,6 +663,8 @@ elif st.session_state["current_step"] == STEP_GENERATING:
             display_mode="code",
             timeout=CODER_TIMEOUT,
             on_first_token=_on_first_token,
+            messages=coder_messages,
+            partial_key="coder_partial",
         )
         st.session_state["is_running"] = False
 
@@ -557,6 +674,10 @@ elif st.session_state["current_step"] == STEP_GENERATING:
             st.rerun()  # re-render into the stable error view below
         else:
             st.session_state["generated_code"] = result
+            st.session_state["coder_partial"] = ""
+            st.session_state["coder_mode"] = "full"
+            st.session_state["refine_instruction"] = ""
+            st.session_state.pop("refine_instruction_area", None)
             add_entry(
                 task=st.session_state["task_description"],
                 prompt=st.session_state["generated_prompt"],
@@ -602,6 +723,16 @@ elif st.session_state["current_step"] == STEP_CODE_OUTPUT:
         # Re-run the coder with the (possibly edited) prompt
         st.session_state["current_step"] = STEP_GENERATING
         st.session_state["coder_pending"] = True
+        st.session_state["coder_mode"] = "full"
+        st.session_state["coder_error"] = ""
+        st.session_state["coder_partial"] = ""
+        st.rerun()
+
+    elif action == "refine":
+        # Multi-turn follow-up: previous code + instruction → updated code
+        st.session_state["current_step"] = STEP_GENERATING
+        st.session_state["coder_pending"] = True
+        st.session_state["coder_mode"] = "refine"
         st.session_state["coder_error"] = ""
         st.session_state["coder_partial"] = ""
         st.rerun()
@@ -613,5 +744,6 @@ elif st.session_state["current_step"] == STEP_CODE_OUTPUT:
             config["coder_model"],
             config.get("backend", "lmstudio"),
         )
+        st.session_state["last_model_role"] = None
         reset_pipeline()
         st.rerun()

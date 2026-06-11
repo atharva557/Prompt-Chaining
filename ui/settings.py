@@ -1,5 +1,5 @@
 import streamlit as st
-from core.api import test_connection, get_models, BACKEND_DEFAULTS
+from core.api import test_connection, get_models, BACKEND_DEFAULTS, BACKEND_LABELS
 from core.config import load_config, save_config
 
 
@@ -95,8 +95,8 @@ def render_settings():
 
     # ── Backend Selection ──
     st.markdown("### Backend")
-    backend_options = ["lmstudio", "ollama"]
-    backend_labels = {"lmstudio": "LM Studio", "ollama": "Ollama"}
+    backend_options = ["lmstudio", "ollama", "custom"]
+    backend_labels = BACKEND_LABELS
 
     selected_backend = st.radio(
         "Select your LLM backend",
@@ -105,6 +105,13 @@ def render_settings():
         horizontal=True,
         key="settings_backend",
     )
+
+    if selected_backend == "custom":
+        st.caption(
+            "Any OpenAI-compatible server: llama.cpp server, llama-swap, "
+            "vLLM, Jan, KoboldCpp, TabbyAPI… Model listing uses `/v1/models`; "
+            "model unloading is left to the server (e.g. llama-swap's TTL)."
+        )
 
     # On an actual backend switch (not every rerun), reset URL to that
     # backend's default and clear the fetched model list

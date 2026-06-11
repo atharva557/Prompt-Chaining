@@ -8,7 +8,16 @@ GENERATION_TIMEOUT = 900  # 15 minutes for generation
 # Default base URLs per backend
 BACKEND_DEFAULTS = {
     "lmstudio": "http://localhost:1234",
-    "ollama": "http://localhost:11434"
+    "ollama": "http://localhost:11434",
+    # llama.cpp server's default port; also covers llama-swap, vLLM, Jan,
+    # KoboldCpp, TabbyAPI — anything speaking the OpenAI API
+    "custom": "http://localhost:8080",
+}
+
+BACKEND_LABELS = {
+    "lmstudio": "LM Studio",
+    "ollama": "Ollama",
+    "custom": "Custom (OpenAI-compatible)",
 }
 
 
@@ -133,9 +142,14 @@ def unload_model(base_url: str, model_id: str, backend: str = "lmstudio") -> boo
     Best-effort model unload. Never raises exceptions.
     LM Studio: native /api/v1/models/unload (0.4.0+), TTL=0 trick as fallback.
     Ollama: uses keep_alive=0 parameter.
+    Custom: no-op — there is no standardized unload across OpenAI-compatible
+    servers, and the TTL trick would *load* the model on llama-swap. Eviction
+    is left to the server's own policy.
     Returns True if unload was attempted (not guaranteed to work).
     """
     base_url = base_url.rstrip("/")
+    if backend == "custom":
+        return False
     try:
         if backend == "ollama":
             # Ollama: POST /api/generate with keep_alive=0
