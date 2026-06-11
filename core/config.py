@@ -1,3 +1,4 @@
+import copy
 import json
 from pathlib import Path
 
@@ -59,17 +60,33 @@ def save_config(config: dict) -> None:
 #  Preset Management
 # ═══════════════════════════════════════════════════════
 
+# Module-level cache keyed by file mtime: presets.json is otherwise re-read
+# and re-parsed on every Streamlit rerun. Kept here (not st.cache_data) so
+# core/ stays free of streamlit imports; manual edits to the file are still
+# picked up via the mtime check.
+_presets_cache: dict | None = None
+_presets_mtime: float = -1.0
+
+
 def load_presets() -> dict:
     """
-    Load built-in presets from presets/presets.json.
+    Load built-in presets from presets/presets.json (cached by mtime).
     Returns dict with 'prompter' and 'coder' keys, each containing
     category -> preset_name -> prompt_text mappings.
     """
+    global _presets_cache, _presets_mtime
+
     if not PRESETS_PATH.exists():
         return {"prompter": {}, "coder": {}}
+
     try:
-        return json.loads(PRESETS_PATH.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, KeyError):
+        mtime = PRESETS_PATH.stat().st_mtime
+        if _presets_cache is None or mtime != _presets_mtime:
+            _presets_cache = json.loads(PRESETS_PATH.read_text(encoding="utf-8"))
+            _presets_mtime = mtime
+        # Copy so callers (get_merged_presets) can't mutate the cache
+        return copy.deepcopy(_presets_cache)
+    except (json.JSONDecodeError, KeyError, OSError):
         return {"prompter": {}, "coder": {}}
 
 

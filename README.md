@@ -22,14 +22,16 @@ Running local LLMs on consumer hardware (8–16 GB VRAM) usually means you can o
 | | Feature | Details |
 |---|---|---|
 | 🔗 | **Two-model pipeline** | Prompter → review / edit → Coder |
-| 📡 | **Real-time streaming** | Token-by-token output via SSE |
+| 📡 | **Real-time streaming** | Token-by-token output via SSE, with tokens/sec stats |
 | 🧠 | **VRAM-aware model swapping** | Automatically unloads the Prompter before loading the Coder |
 | 🔌 | **Dual backend support** | LM Studio *and* Ollama — switch with one click |
+| 🔍 | **Auto model detection** | Installed models are detected and listed automatically |
+| 🕘 | **Run history** | Past runs persist across restarts; reopen or delete them from the sidebar |
+| ⚡ | **Side-by-side output** | Edit the prompt next to the generated code and regenerate in place |
 | 📋 | **25 built-in presets** | Across General, Web Dev, Data & Scripts, Games & Graphics, and Systems & CLI |
 | ✏️ | **Custom preset saving** | Save your own system prompts for either role |
-| 🗂️ | **Smart file output** | Auto language detection, suggested filenames, timestamped saves |
+| 🗂️ | **Smart file output** | Auto language detection, suggested filenames, timestamped saves, browser download |
 | 🌙 | **Minimal dark theme** | Clean, ChatGPT/Claude-inspired interface with a warm accent |
-| ⚙️ | **Configurable output folder** | Choose where generated code is saved |
 
 <br>
 
@@ -91,7 +93,14 @@ pip install -r requirements.txt
 streamlit run app.py
 ```
 
-On first launch the **Settings** page opens automatically — configure your backend and models there.
+On first launch the **Settings** page opens automatically — your installed models are detected and listed, so you just pick two and save.
+
+To run the test suite:
+
+```bash
+pip install -r requirements-dev.txt
+pytest
+```
 
 <br>
 
@@ -120,15 +129,17 @@ promptchain/
 ├── core/
 │   ├── api.py               # LM Studio / Ollama API calls + model unload
 │   ├── config.py            # Config & preset management
+│   ├── history.py           # Persistent run history (history.json)
 │   └── streaming.py         # Real-time SSE token streaming
 ├── ui/
-│   ├── styles.py            # Premium dark theme CSS + UI components
-│   ├── settings.py          # Settings page
+│   ├── styles.py            # Minimal dark theme CSS + UI components
+│   ├── settings.py          # Settings page (auto model detection)
 │   ├── task_input.py        # Task input + preset selector
 │   ├── prompt_review.py     # Prompt review / edit step
-│   └── code_output.py       # Code display, language detection & save
+│   └── code_output.py       # Side-by-side prompt/code, save & download
 ├── presets/
 │   └── presets.json         # 25 built-in system prompt presets
+├── tests/                   # Pytest suite for the core helpers
 ├── .streamlit/
 │   └── config.toml          # Streamlit theme configuration
 ├── requirements.txt

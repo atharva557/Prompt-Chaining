@@ -5,11 +5,13 @@ Chains two LLMs together: a Prompter that refines your idea into
 a detailed prompt, and a Coder that turns that prompt into working code.
 """
 
+import time
+
 import streamlit as st
 
 from core.config import config_exists, load_config
 from core.api import test_connection, unload_model
-from core.history import load_history, add_entry, clear_history
+from core.history import load_history, add_entry, delete_entry, clear_history
 from core.streaming import stream_completion, PROMPTER_TIMEOUT, CODER_TIMEOUT
 from ui.styles import (
     inject_custom_css,
@@ -158,16 +160,26 @@ with st.sidebar:
     else:
         for entry in history[:10]:
             task_text = entry.get("task", "") or "(untitled)"
-            label = task_text[:38] + ("…" if len(task_text) > 38 else "")
+            label = task_text[:32] + ("…" if len(task_text) > 32 else "")
             date = entry.get("timestamp", "")[:16].replace("T", " ")
-            if st.button(
-                label,
-                key=f"hist_{entry['id']}",
-                use_container_width=True,
-                help=f"{date} — {task_text}",
-            ):
-                load_history_entry(entry)
-                st.rerun()
+            col_open, col_del = st.columns([5, 1])
+            with col_open:
+                if st.button(
+                    label,
+                    key=f"hist_{entry['id']}",
+                    use_container_width=True,
+                    help=f"{date} — {task_text}",
+                ):
+                    load_history_entry(entry)
+                    st.rerun()
+            with col_del:
+                if st.button(
+                    "✕",
+                    key=f"histdel_{entry['id']}",
+                    help="Delete this run",
+                ):
+                    delete_entry(entry["id"])
+                    st.rerun()
         if len(history) > 10:
             st.caption(f"+ {len(history) - 10} older run(s)")
         if st.button("Clear history", key="clear_history_btn", use_container_width=True):
@@ -267,6 +279,8 @@ def run_streaming_generation(
     """
     full_output = ""
     first_token = True
+    chunk_count = 0
+    start_time = time.perf_counter()
 
     try:
         stream = stream_completion(
@@ -288,11 +302,20 @@ def run_streaming_generation(
                 first_token = False
                 if on_first_token:
                     on_first_token()
+            chunk_count += 1
             full_output += token
             if display_mode == "code":
                 output_placeholder.code(full_output, line_numbers=True)
             else:
                 output_placeholder.markdown(full_output)
+
+        elapsed = time.perf_counter() - start_time
+        if chunk_count and elapsed > 0:
+            # One SSE chunk is roughly one token
+            st.caption(
+                f"~{chunk_count} tokens in {elapsed:.1f}s "
+                f"({chunk_count / elapsed:.1f} tok/s)"
+            )
 
         return full_output, ""
 

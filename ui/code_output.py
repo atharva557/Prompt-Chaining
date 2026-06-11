@@ -224,7 +224,7 @@ def render_code_output():
         )
 
     # ── Action Buttons ──
-    col1, col2, col3 = st.columns(3)
+    col1, col2, col3, col4 = st.columns(4)
 
     with col1:
         save_clicked = st.button(
@@ -235,9 +235,21 @@ def render_code_output():
         )
 
     with col2:
-        render_copy_button(code)
+        # Browser-side download — works even when the app runs on
+        # another machine, where "Save file" only writes server-side
+        st.download_button(
+            "Download",
+            data=code,
+            file_name=filename or suggested,
+            mime="text/plain",
+            key="download_code_btn",
+            use_container_width=True,
+        )
 
     with col3:
+        render_copy_button(code)
+
+    with col4:
         start_over = st.button(
             "Start over",
             key="start_over_btn",
