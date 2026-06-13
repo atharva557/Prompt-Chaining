@@ -180,15 +180,13 @@ def render_code_output():
     extension = detect_language(task, code, fence_lang)
     lang_display = LANGUAGE_DISPLAY.get(extension, "text")
 
-    # ── Side-by-side: prompt (editable) | code ──
-    col_prompt, col_code = st.columns([1, 1.3], gap="medium")
-
-    with col_prompt:
-        st.markdown("#### Prompt")
+    # ── Prompt (editable) — secondary on the output page, so it's tucked into
+    # an expander to give the code the full content width ──
+    with st.expander("📝 Prompt sent to the Coder — edit & regenerate", expanded=False):
         edited_prompt = st.text_area(
             "Prompt sent to the Coder",
             value=st.session_state.get("generated_prompt", ""),
-            height=420,
+            height=300,
             key="output_prompt_area",
             label_visibility="collapsed",
         )
@@ -198,13 +196,20 @@ def render_code_output():
             use_container_width=True,
         )
 
-    with col_code:
-        st.markdown("#### Code")
-        st.code(code, language=lang_display, line_numbers=True)
-
     if regenerate:
         st.session_state["generated_prompt"] = edited_prompt
         return "regenerate"
+
+    # ── Code — full width, with a language + line-count header bar ──
+    line_count = code.count("\n") + 1 if code.strip() else 0
+    st.markdown(
+        '<div class="pc-code-header">'
+        f'<span class="pc-code-lang">{lang_display}</span>'
+        f'<span class="pc-code-lines">{line_count} lines</span>'
+        '</div>',
+        unsafe_allow_html=True,
+    )
+    st.code(code, language=lang_display, line_numbers=True)
 
     # ── Refine: follow-up instruction sent with the current code ──
     st.markdown("#### Refine")

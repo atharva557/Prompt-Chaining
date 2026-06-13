@@ -183,6 +183,31 @@ def inject_custom_css():
         color: var(--pc-text-muted) !important;
     }
 
+    /* Code panel header bar (language badge + line count) */
+    .pc-code-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        background: var(--pc-surface);
+        border: 1px solid var(--pc-border);
+        border-radius: 10px;
+        padding: 0.4rem 0.9rem;
+        margin: 0.3rem 0 0.45rem 0;
+    }
+    .pc-code-lang {
+        font-family: 'JetBrains Mono', monospace;
+        font-size: 0.72rem;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+        color: var(--pc-accent);
+    }
+    .pc-code-lines {
+        font-family: 'Inter', sans-serif;
+        font-size: 0.75rem;
+        color: var(--pc-text-muted);
+    }
+
     /* ── Step Progress Indicator ── */
     .step-indicator {
         display: flex;
