@@ -12,13 +12,80 @@ BACKEND_DEFAULTS = {
     # llama.cpp server's default port; also covers llama-swap, vLLM, Jan,
     # KoboldCpp, TabbyAPI — anything speaking the OpenAI API
     "custom": "http://localhost:8080",
+    "openai": "https://api.openai.com",
+    "anthropic": "https://api.anthropic.com",
+    # Gemini's OpenAI-compatible base already includes the /v1beta/openai path
+    "gemini": "https://generativelanguage.googleapis.com/v1beta/openai",
 }
 
 BACKEND_LABELS = {
     "lmstudio": "LM Studio",
     "ollama": "Ollama",
     "custom": "Custom (OpenAI-compatible)",
+    "openai": "OpenAI",
+    "anthropic": "Anthropic (Claude)",
+    "gemini": "Google Gemini",
 }
+
+CLOUD_BACKENDS = {"openai", "anthropic", "gemini"}
+
+# Environment variables checked (before config.json) for each provider's key
+ENV_KEY_NAMES = {
+    "openai": "OPENAI_API_KEY",
+    "anthropic": "ANTHROPIC_API_KEY",
+    "gemini": "GEMINI_API_KEY",
+}
+
+
+def is_cloud(backend: str) -> bool:
+    """True for paid API backends (no local server, no VRAM management)."""
+    return backend in CLOUD_BACKENDS
+
+
+def chat_completions_url(base_url: str, backend: str) -> str:
+    """Chat-completions endpoint for a backend (Anthropic excluded — it
+    goes through the official SDK, not an OpenAI-compatible path)."""
+    base_url = base_url.rstrip("/")
+    if backend == "gemini":
+        # base already ends in /v1beta/openai
+        return f"{base_url}/chat/completions"
+    return f"{base_url}/v1/chat/completions"
+
+
+def models_url(base_url: str, backend: str) -> str:
+    """Model-listing endpoint for a backend."""
+    base_url = base_url.rstrip("/")
+    if backend == "ollama":
+        return f"{base_url}/api/tags"
+    if backend == "gemini":
+        return f"{base_url}/models"
+    return f"{base_url}/v1/models"
+
+
+def _auth_headers(backend: str, api_key: str) -> dict:
+    if api_key and is_cloud(backend):
+        return {"Authorization": f"Bearer {api_key}"}
+    return {}
+
+
+def _anthropic_models(api_key: str) -> tuple[list[str], str]:
+    """List Anthropic models via the official SDK (auto-paginates)."""
+    try:
+        import anthropic
+    except ImportError:
+        return [], (
+            "The 'anthropic' package is required for the Anthropic backend. "
+            "Run: pip install anthropic"
+        )
+    try:
+        client = anthropic.Anthropic(api_key=api_key, timeout=DEFAULT_TIMEOUT)
+        return [m.id for m in client.models.list()], ""
+    except anthropic.AuthenticationError:
+        return [], "Invalid Anthropic API key."
+    except anthropic.APIConnectionError:
+        return [], "Cannot reach the Anthropic API. Check your internet connection."
+    except Exception as e:
+        return [], f"Error fetching models: {e}"
 
 
 def test_connection(base_url: str, backend: str = "lmstudio") -> tuple[bool, str]:
