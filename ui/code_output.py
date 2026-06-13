@@ -1,7 +1,5 @@
-import json
 import re
 import streamlit as st
-import streamlit.components.v1 as components
 from pathlib import Path
 from datetime import datetime
 
@@ -102,60 +100,6 @@ def suggest_filename(task: str, extension: str) -> str:
     return f"{filename}.{extension}"
 
 
-def render_copy_button(code: str):
-    """Render a clipboard copy button using JavaScript Clipboard API."""
-    # json.dumps produces a valid JS string literal, so the code can be
-    # embedded directly without manual escaping or entity round-trips.
-    # "</" is escaped so code containing "</script>" can't break out of
-    # the script block ("<\/" is identical inside a JS string).
-    escaped_code = json.dumps(code).replace("</", "<\\/")
-
-    copy_html = f"""
-    <div style="display:flex; justify-content:center;">
-        <button id="copyBtn" onclick="copyCode()" style="
-            background: #30302e;
-            color: #eceae4;
-            border: 1px solid #3d3d3a;
-            padding: 0.5rem 1.4rem;
-            border-radius: 999px;
-            font-family: 'Inter', sans-serif;
-            font-weight: 500;
-            font-size: 0.9rem;
-            cursor: pointer;
-            width: 100%;
-            transition: background 0.15s ease, border-color 0.15s ease;
-        " onmouseover="this.style.background='#3a3a37'" onmouseout="this.style.background='#30302e'">Copy code</button>
-    </div>
-    <script>
-    function copyCode() {{
-        const code = {escaped_code};
-        navigator.clipboard.writeText(code).then(() => {{
-            const btn = document.getElementById('copyBtn');
-            btn.textContent = 'Copied';
-            btn.style.color = '#4ade80';
-            btn.style.borderColor = '#4ade80';
-            setTimeout(() => {{
-                btn.textContent = 'Copy code';
-                btn.style.color = '#eceae4';
-                btn.style.borderColor = '#3d3d3a';
-            }}, 2000);
-        }}).catch(() => {{
-            const btn = document.getElementById('copyBtn');
-            btn.textContent = 'Copy failed';
-            btn.style.color = '#f87171';
-            setTimeout(() => {{
-                btn.textContent = 'Copy code';
-                btn.style.color = '#eceae4';
-            }}, 2000);
-        }});
-    }}
-    </script>
-    """
-    # components.html (not st.iframe) — available on all supported
-    # Streamlit versions, and scripts execute inside the sandbox iframe.
-    components.html(copy_html, height=50)
-
-
 def render_code_output():
     """
     Render the final output page: prompt and code side by side,
@@ -210,6 +154,7 @@ def render_code_output():
         unsafe_allow_html=True,
     )
     st.code(code, language=lang_display, line_numbers=True)
+    st.caption("Copy with the icon in the code block's top-right corner, or use **Download** below.")
 
     # ── Refine: follow-up instruction sent with the current code ──
     st.markdown("#### Refine")
@@ -257,7 +202,8 @@ def render_code_output():
         )
 
     # ── Action Buttons ──
-    col1, col2, col3, col4 = st.columns(4)
+    # (Copy lives on the code block itself — the icon in its top-right.)
+    col1, col2, col3 = st.columns(3)
 
     with col1:
         save_clicked = st.button(
@@ -280,9 +226,6 @@ def render_code_output():
         )
 
     with col3:
-        render_copy_button(code)
-
-    with col4:
         start_over = st.button(
             "Start over",
             key="start_over_btn",
