@@ -78,6 +78,30 @@ class TestAuthHeaders(unittest.TestCase):
         self.assertEqual(api._auth_headers("openai", ""), {})
 
 
+class TestEstimateCost(unittest.TestCase):
+    def test_known_model_input_plus_output(self):
+        # Opus 4.8: $5/M in + $25/M out → 1M of each = $30
+        self.assertAlmostEqual(
+            api.estimate_cost("claude-opus-4-8", 1_000_000, 1_000_000), 30.0
+        )
+
+    def test_substring_match_with_suffix(self):
+        self.assertIsNotNone(api.estimate_cost("gpt-4o-mini-2024-07-18", 1000, 1000))
+
+    def test_mini_matched_before_base(self):
+        # gpt-4o-mini must match its own (cheaper) row, not gpt-4o
+        mini = api.estimate_cost("gpt-4o-mini", 1_000_000, 0)
+        base = api.estimate_cost("gpt-4o", 1_000_000, 0)
+        self.assertLess(mini, base)
+
+    def test_unknown_model_returns_none(self):
+        self.assertIsNone(api.estimate_cost("llama-3-8b-instruct", 1000, 1000))
+
+    def test_missing_token_counts_return_none(self):
+        self.assertIsNone(api.estimate_cost("claude-opus-4-8", None, 100))
+        self.assertIsNone(api.estimate_cost("", 100, 100))
+
+
 class TestUnloadNoOp(unittest.TestCase):
     @mock.patch("core.api.requests.post")
     def test_cloud_unload_makes_no_request(self, mock_post):

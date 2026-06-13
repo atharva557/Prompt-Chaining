@@ -91,7 +91,7 @@ def render_landing(config: dict) -> str | None:
     )
 
     action = None
-    col1, col2, col3 = st.columns(3, gap="medium")
+    col1, col2, col3, col4 = st.columns(4, gap="medium")
 
     with col1:
         st.markdown(
@@ -142,6 +142,22 @@ def render_landing(config: dict) -> str | None:
         ):
             action = "chat_coder"
 
+    with col4:
+        st.markdown(
+            _mode_card(
+                "📋", "Presets",
+                "Browse and edit the system prompts each model uses — built-in "
+                "library plus your own custom presets.",
+            ),
+            unsafe_allow_html=True,
+        )
+        if st.button(
+            "Manage presets",
+            key="landing_presets_btn",
+            use_container_width=True,
+        ):
+            action = "presets"
+
     st.markdown(
         '<div class="pc-how">'
         '<b>1</b> Describe an idea → <b>2</b> Review the prompt → '
@@ -160,7 +176,14 @@ def render_landing(config: dict) -> str | None:
 
     st.caption(
         f"Prompter: {_role_summary('prompter')} · "
-        f"Coder: {_role_summary('coder')} — change in Settings (sidebar)."
+        f"Coder: {_role_summary('coder')}"
     )
+
+    col_l, col_c, col_r = st.columns([2, 1, 2])
+    with col_c:
+        if st.button("⚙ Settings", key="landing_settings_btn", use_container_width=True):
+            st.session_state["show_settings"] = True
+            st.session_state["_settings_just_opened"] = True
+            st.rerun()
 
     return action

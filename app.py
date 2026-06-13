@@ -10,7 +10,7 @@ import time
 import streamlit as st
 
 from core.config import config_exists, load_config, get_role_endpoint
-from core.api import test_connection, unload_model, is_cloud, BACKEND_LABELS
+from core.api import test_connection, unload_model, is_cloud, estimate_cost, BACKEND_LABELS
 from core.history import load_history, add_entry, delete_entry, clear_history
 from core.streaming import stream_completion, PROMPTER_TIMEOUT, CODER_TIMEOUT
 from ui.styles import (
@@ -231,7 +231,14 @@ with st.sidebar:
         connected = _check_connection(
             ep["base_url"], ep["backend"], ep["api_key"]
         ) if ep["base_url"] else False
-        render_connection_badge(connected)
+        # Explain a red badge on hover: missing key vs. unreachable server
+        if connected:
+            reason = ""
+        elif is_cloud(ep["backend"]) and not ep["api_key"]:
+            reason = f"No API key set for {backend_label}"
+        else:
+            reason = f"Can't reach {ep['base_url'] or 'the server'}"
+        render_connection_badge(connected, reason)
 
     render_divider()
 
@@ -387,6 +394,13 @@ def run_streaming_generation(
                 f"{usage.get('input_tokens', '?')} in / "
                 f"{usage.get('output_tokens', '?')} out tokens"
             )
+            cost = estimate_cost(
+                endpoint["model"],
+                usage.get("input_tokens"),
+                usage.get("output_tokens"),
+            )
+            if cost is not None:
+                stats.append(f"~${cost:.4f} est.")
         if stats:
             st.caption(" · ".join(stats))
 

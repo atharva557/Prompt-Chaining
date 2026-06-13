@@ -42,6 +42,39 @@ def is_cloud(backend: str) -> bool:
     return backend in CLOUD_BACKENDS
 
 
+# Approximate USD per 1M tokens (input, output), matched by substring (most
+# specific first). Provider prices drift, so this is a best-effort estimate
+# shown with an "est." label only; unknown models return None (no estimate).
+_PRICING = [
+    ("claude-fable", 10.0, 50.0),
+    ("claude-opus", 5.0, 25.0),
+    ("claude-sonnet", 3.0, 15.0),
+    ("claude-haiku", 1.0, 5.0),
+    ("gpt-4o-mini", 0.15, 0.60),
+    ("gpt-4o", 2.50, 10.0),
+    ("gpt-4.1-mini", 0.40, 1.60),
+    ("gpt-4.1", 2.00, 8.00),
+    ("o3-mini", 1.10, 4.40),
+    ("gemini-2.0-flash", 0.10, 0.40),
+    ("gemini-1.5-flash", 0.075, 0.30),
+    ("gemini-2.5-pro", 1.25, 10.0),
+    ("gemini-1.5-pro", 1.25, 5.0),
+    ("gemini", 0.10, 0.40),  # fallback for other gemini flash-tier models
+]
+
+
+def estimate_cost(model: str, input_tokens, output_tokens) -> float | None:
+    """Best-effort USD cost for a generation, or None if the model is unknown
+    or token counts are missing. Only meaningful for cloud models."""
+    if not model or input_tokens is None or output_tokens is None:
+        return None
+    m = model.lower()
+    for sub, price_in, price_out in _PRICING:
+        if sub in m:
+            return (input_tokens / 1_000_000) * price_in + (output_tokens / 1_000_000) * price_out
+    return None
+
+
 def chat_completions_url(base_url: str, backend: str) -> str:
     """Chat-completions endpoint for a backend (Anthropic excluded — it
     goes through the official SDK, not an OpenAI-compatible path)."""

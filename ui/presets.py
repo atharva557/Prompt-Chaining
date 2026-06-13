@@ -30,7 +30,10 @@ def _render_preset_card(role: str, category: str, name: str, content: str, confi
     """One editable preset, with Save + Reset/Delete actions."""
     is_custom = category == "Custom"
     overridden = (not is_custom) and is_preset_overridden(config, role, category, name)
+    in_use = content == st.session_state.get(f"{role}_system", "")
     badge = " · custom" if is_custom else (" · edited" if overridden else "")
+    if in_use:
+        badge += " · in use"
 
     with st.expander(f"{name}{badge}"):
         widget_key = f"presetmgr_{role}_{category}_{name}"

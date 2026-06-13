@@ -170,8 +170,8 @@ def _render_role_endpoint(role: str, label: str, config: dict) -> dict:
     api_key = _effective_key(backend, config)
     if is_cloud(backend) and not api_key:
         st.warning(
-            f"Add your {BACKEND_LABELS[backend]} API key in **API keys** above "
-            "to list models."
+            f"Add your {BACKEND_LABELS[backend]} API key in the **API keys** "
+            "tab to list models."
         )
 
     fetch_error = _autofetch_models_for_role(role, base_url, backend, api_key)
@@ -246,6 +246,17 @@ def _render_model_picker(role: str, label: str, config: dict, fetch_error: str) 
     return st.selectbox(f"{label} model", options=available, key=key_sel)
 
 
+def _render_api_keys_tab(config: dict):
+    """Masked key field per cloud provider (or an env-var notice)."""
+    st.caption(
+        "Read from environment variables first "
+        "(`OPENAI_API_KEY` / `ANTHROPIC_API_KEY` / `GEMINI_API_KEY`), then from "
+        "here. Saved to config.json (git-ignored)."
+    )
+    for backend in PROVIDERS:
+        _render_api_key_field(backend, config)
+
+
 def render_settings():
     """Render the settings configuration page."""
 
@@ -262,28 +273,25 @@ def render_settings():
         "Configure each role independently — run both locally, or mix a local "
         "Prompter with a cloud Coder for frontier-quality code on a small GPU."
     )
-    st.markdown("---")
 
     config = st.session_state.get("config", load_config())
     _ensure_widget_defaults(config)
 
-    # Which cloud providers are currently selected by either role (read from
-    # session_state, which holds the persisted/previous radio value)
-    selected_backends = {
-        st.session_state.get("settings_prompter_backend", "lmstudio"),
-        st.session_state.get("settings_coder_backend", "lmstudio"),
-    }
-    cloud_in_use = sorted(b for b in selected_backends if is_cloud(b))
-
-    if cloud_in_use:
-        st.markdown("### API keys")
-        for backend in cloud_in_use:
-            _render_api_key_field(backend, config)
-        st.markdown("---")
-
-    prompter = _render_role_endpoint("prompter", "Prompter", config)
-    st.markdown("---")
-    coder = _render_role_endpoint("coder", "Coder", config)
+    tab_prompter, tab_coder, tab_keys, tab_output = st.tabs(
+        ["Prompter", "Coder", "API keys", "Output"]
+    )
+    with tab_prompter:
+        prompter = _render_role_endpoint("prompter", "Prompter", config)
+    with tab_coder:
+        coder = _render_role_endpoint("coder", "Coder", config)
+    with tab_keys:
+        _render_api_keys_tab(config)
+    with tab_output:
+        output_folder = st.text_input(
+            "Output folder",
+            key="settings_output_folder",
+            help="Where generated code files will be saved",
+        )
 
     # Same local model for both roles defeats the VRAM swap
     if (
@@ -295,15 +303,6 @@ def render_settings():
             "Both roles use the same model on the same backend. This works, "
             "but different models are recommended."
         )
-
-    # ── Output Folder ──
-    st.markdown("---")
-    st.markdown("### Output")
-    output_folder = st.text_input(
-        "Output folder",
-        key="settings_output_folder",
-        help="Where generated code files will be saved",
-    )
 
     # ── Save ──
     st.markdown("---")
@@ -331,6 +330,7 @@ def render_settings():
             "prompter_max_tokens": st.session_state["settings_prompter_tokens"],
             "coder_max_tokens": st.session_state["settings_coder_tokens"],
             "custom_presets": config.get("custom_presets", {}),
+            "preset_overrides": config.get("preset_overrides", {}),
         }
         save_config(new_config)
         st.session_state["config"] = new_config

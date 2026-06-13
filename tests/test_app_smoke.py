@@ -52,6 +52,14 @@ class TestLanding(AppSmokeTestCase):
         self.assertIn("landing_pipeline_btn", keys)
         self.assertIn("landing_chat_prompter_btn", keys)
         self.assertIn("landing_chat_coder_btn", keys)
+        self.assertIn("landing_presets_btn", keys)   # 4th mode card
+        self.assertIn("landing_settings_btn", keys)  # settings link
+
+    def test_landing_presets_card_navigates(self):
+        at = self._run_app()
+        at.button(key="landing_presets_btn").click().run()
+        self.assertFalse(at.exception)
+        self.assertEqual(at.session_state["page"], "presets")
 
     def test_landing_to_pipeline(self):
         at = self._run_app()
@@ -150,6 +158,19 @@ class TestSettingsPage(AppSmokeTestCase):
         at.run()
         self.assertFalse(at.exception)
         self.assertIn("save_settings_btn", [b.key for b in at.button])
+
+
+class TestChatEmptyState(AppSmokeTestCase):
+    def test_chat_shows_starter_examples(self):
+        at = self._run_app()
+        at.session_state["page"] = "chat_prompter"
+        at.run()
+        self.assertFalse(at.exception)
+        example_keys = [
+            b.key for b in at.button
+            if b.key and b.key.startswith("chat_prompter_ex_")
+        ]
+        self.assertEqual(len(example_keys), 3)
 
 
 class TestPresetsPage(AppSmokeTestCase):

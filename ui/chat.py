@@ -11,9 +11,23 @@ import time
 
 import streamlit as st
 
-from core.api import unload_model, is_cloud, BACKEND_LABELS
+from core.api import unload_model, is_cloud, estimate_cost, BACKEND_LABELS
 from core.config import get_role_endpoint
 from core.streaming import stream_completion, PROMPTER_TIMEOUT, CODER_TIMEOUT
+
+# Starter prompts shown on an empty chat
+ROLE_EXAMPLES = {
+    "prompter": [
+        "A React calculator with keyboard support",
+        "A Python script that watches a folder for new files",
+        "A CLI that converts CSV to JSON",
+    ],
+    "coder": [
+        "Write a debounce function in TypeScript",
+        "Explain async/await with a short example",
+        "A regex to validate an email, with tests",
+    ],
+}
 
 # Chat-specific defaults: the pipeline system prompts demand rigid output
 # ("output ONLY the prompt" / "a single fenced block, no prose"), which is
@@ -100,8 +114,22 @@ def render_chat(role: str, config: dict) -> None:
         with st.chat_message(m["role"]):
             st.markdown(m["content"])
 
-    user_msg = st.chat_input(meta["placeholder"], key=f"chat_{role}_input")
+    # chat_input always pins to the page bottom; a clicked example seeds it
+    seeded = st.session_state.pop(f"chat_{role}_seed", "")
+    typed = st.chat_input(meta["placeholder"], key=f"chat_{role}_input")
+    user_msg = typed or seeded
+
     if not user_msg:
+        # Empty-state: offer a few starter prompts
+        if not msgs:
+            st.caption("Not sure where to start? Try one of these:")
+            ex_cols = st.columns(len(ROLE_EXAMPLES[role]))
+            for i, example in enumerate(ROLE_EXAMPLES[role]):
+                if ex_cols[i].button(
+                    example, key=f"chat_{role}_ex_{i}", use_container_width=True
+                ):
+                    st.session_state[f"chat_{role}_seed"] = example
+                    st.rerun()
         return
 
     msgs.append({"role": "user", "content": user_msg})
@@ -179,6 +207,11 @@ def render_chat(role: str, config: dict) -> None:
                     f"{usage.get('input_tokens', '?')} in / "
                     f"{usage.get('output_tokens', '?')} out tokens"
                 )
+                cost = estimate_cost(
+                    model, usage.get("input_tokens"), usage.get("output_tokens")
+                )
+                if cost is not None:
+                    stats.append(f"~${cost:.4f} est.")
             if stats:
                 st.caption(" · ".join(stats))
 

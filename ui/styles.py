@@ -149,9 +149,38 @@ def inject_custom_css():
     }
 
     /* ── Code Blocks ── */
-    .stCodeBlock {
+    .stCodeBlock,
+    [data-testid="stCode"],
+    [data-testid="stCodeBlock"] {
         border-radius: 12px !important;
         border: 1px solid var(--pc-border) !important;
+        background: var(--pc-bg-secondary) !important;
+        overflow: hidden !important;
+    }
+
+    /* Constrain very long output to a scrollable pane and make it readable */
+    .stCodeBlock pre,
+    [data-testid="stCode"] pre,
+    [data-testid="stCodeBlock"] pre {
+        max-height: 60vh !important;
+        overflow: auto !important;
+        background: var(--pc-bg-secondary) !important;
+        padding: 0.9rem 1rem !important;
+        margin: 0 !important;
+    }
+
+    .stCodeBlock code,
+    [data-testid="stCode"] code,
+    [data-testid="stCodeBlock"] code {
+        font-family: 'JetBrains Mono', monospace !important;
+        font-size: 0.82rem !important;
+        line-height: 1.6 !important;
+    }
+
+    /* Line-number gutter: muted and given a little breathing room */
+    [data-testid="stCode"] pre code .comment,
+    [data-testid="stCodeBlock"] .line-number {
+        color: var(--pc-text-muted) !important;
     }
 
     /* ── Step Progress Indicator ── */
@@ -328,7 +357,12 @@ def inject_custom_css():
     #MainMenu { visibility: hidden; }
     footer { visibility: hidden; }
     header[data-testid="stHeader"] { background: transparent !important; }
-    </style>
+
+    /* Hide the "Deploy" button and the dev toolbar actions */
+    [data-testid="stAppDeployButton"],
+    .stDeployButton,
+    [data-testid="stToolbarActions"] { display: none !important; }
+</style>
     """, unsafe_allow_html=True)
 
 
@@ -387,16 +421,18 @@ def render_glass_card(content: str):
     st.markdown(f'<div class="glass-card">{content}</div>', unsafe_allow_html=True)
 
 
-def render_connection_badge(connected: bool):
-    """Render a connection status badge."""
+def render_connection_badge(connected: bool, reason: str = ""):
+    """Render a connection status badge. `reason` becomes a hover tooltip
+    (e.g. why an endpoint is disconnected)."""
+    title = f' title="{reason}"' if reason else ""
     if connected:
         st.markdown(
-            '<div class="connection-badge connected">● Connected</div>',
+            f'<div class="connection-badge connected"{title}>● Connected</div>',
             unsafe_allow_html=True
         )
     else:
         st.markdown(
-            '<div class="connection-badge disconnected">● Disconnected</div>',
+            f'<div class="connection-badge disconnected"{title}>● Disconnected</div>',
             unsafe_allow_html=True
         )
 

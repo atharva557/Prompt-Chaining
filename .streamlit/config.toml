@@ -11,3 +11,7 @@ headless = true
 
 [browser]
 gatherUsageStats = false
+
+[client]
+# Hide the "Deploy" button and developer menu from the top-right toolbar
+toolbarMode = "minimal"
