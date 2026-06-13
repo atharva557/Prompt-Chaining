@@ -1,47 +1,109 @@
 import copy
 import json
+import os
 from pathlib import Path
+
+from core.api import BACKEND_DEFAULTS, ENV_KEY_NAMES
 
 CONFIG_PATH = Path(__file__).parent.parent / "config.json"
 PRESETS_PATH = Path(__file__).parent.parent / "presets" / "presets.json"
 
 def get_default_config() -> dict:
-    """Return default configuration."""
+    """
+    Return default configuration.
+
+    Backend/base_url are per-role so the Prompter and Coder can run on
+    different backends (e.g. local Prompter + cloud Coder). API keys for the
+    cloud providers live under `api_keys` (env vars take precedence at use).
+    """
     return {
-        "backend": "lmstudio",           # "lmstudio" or "ollama"
-        "base_url": "http://localhost:1234",
+        "prompter_backend": "lmstudio",
+        "prompter_base_url": "http://localhost:1234",
+        "coder_backend": "lmstudio",
+        "coder_base_url": "http://localhost:1234",
         "prompter_model": "",
         "coder_model": "",
+        "api_keys": {"openai": "", "anthropic": "", "gemini": ""},
         "output_folder": "./output",
         "prompter_temperature": 0.3,
         "coder_temperature": 0.1,
         "prompter_max_tokens": 1024,
         "coder_max_tokens": 4096,
-        "custom_presets": {}
+        "custom_presets": {},
     }
 
+
+def _migrate_config(saved: dict) -> dict:
+    """Backfill the per-role schema from a legacy single-backend config so
+    existing users upgrade seamlessly."""
+    saved = dict(saved)
+    legacy_backend = saved.get("backend")
+    legacy_url = saved.get("base_url")
+    if "prompter_backend" not in saved and legacy_backend:
+        saved["prompter_backend"] = legacy_backend
+        saved["coder_backend"] = legacy_backend
+    if "prompter_base_url" not in saved and legacy_url:
+        saved["prompter_base_url"] = legacy_url
+        saved["coder_base_url"] = legacy_url
+    if "api_keys" not in saved:
+        saved["api_keys"] = {"openai": "", "anthropic": "", "gemini": ""}
+    return saved
+
+
 def config_exists() -> bool:
-    """Check if config.json exists and has the required fields."""
+    """Check if config.json exists and has both models plus endpoint info
+    (tolerant of both the per-role and the legacy single-backend schema)."""
     if not CONFIG_PATH.exists():
         return False
     try:
         config = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
-        required = ["base_url", "prompter_model", "coder_model"]
-        return all(config.get(k) for k in required)
     except (json.JSONDecodeError, KeyError):
         return False
+    if not (config.get("prompter_model") and config.get("coder_model")):
+        return False
+    has_per_role = config.get("prompter_base_url") and config.get("coder_base_url")
+    has_legacy = bool(config.get("base_url"))
+    return bool(has_per_role or has_legacy)
 
 def load_config() -> dict:
-    """Load config from file, merging with defaults for any missing keys."""
+    """Load config from file, migrating legacy schema and merging with
+    defaults for any missing keys."""
     defaults = get_default_config()
     if not CONFIG_PATH.exists():
         return defaults
     try:
         saved = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
-        defaults.update(saved)
-        return defaults
     except (json.JSONDecodeError, KeyError):
         return defaults
+    defaults.update(_migrate_config(saved))
+    return defaults
+
+
+def _resolve_api_key(config: dict, backend: str) -> str:
+    """API key for a cloud backend: environment variable first, then the
+    key saved in config.json. Empty string for local backends."""
+    env_name = ENV_KEY_NAMES.get(backend)
+    if env_name:
+        env_val = os.environ.get(env_name, "").strip()
+        if env_val:
+            return env_val
+    return (config.get("api_keys") or {}).get(backend, "")
+
+
+def get_role_endpoint(config: dict, role: str) -> dict:
+    """
+    Resolve the active endpoint for 'prompter' or 'coder'.
+    Returns {backend, base_url, model, api_key} — the single seam every
+    generation call site uses instead of reading config keys directly.
+    """
+    backend = config.get(f"{role}_backend", "lmstudio")
+    base_url = config.get(f"{role}_base_url") or BACKEND_DEFAULTS.get(backend, "")
+    return {
+        "backend": backend,
+        "base_url": base_url,
+        "model": config.get(f"{role}_model", ""),
+        "api_key": _resolve_api_key(config, backend),
+    }
 
 def save_config(config: dict) -> None:
     """

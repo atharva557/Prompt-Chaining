@@ -88,22 +88,32 @@ def _anthropic_models(api_key: str) -> tuple[list[str], str]:
         return [], f"Error fetching models: {e}"
 
 
-def test_connection(base_url: str, backend: str = "lmstudio") -> tuple[bool, str]:
+def test_connection(
+    base_url: str, backend: str = "lmstudio", api_key: str = ""
+) -> tuple[bool, str]:
     """
-    Test connection to the LLM server.
+    Test connection to the LLM server (cloud or local).
     Returns (success: bool, message: str).
     """
+    if backend == "anthropic":
+        # No bare ping endpoint; listing models doubles as an auth + reach check
+        _models, err = _anthropic_models(api_key)
+        return (True, "Connected successfully!") if not err else (False, err)
+
     base_url = base_url.rstrip("/")
+    if is_cloud(backend) and not api_key:
+        return False, f"An API key is required for {BACKEND_LABELS.get(backend, backend)}."
     try:
-        if backend == "ollama":
-            resp = requests.get(f"{base_url}/api/tags", timeout=DEFAULT_TIMEOUT)
-        else:
-            resp = requests.get(f"{base_url}/v1/models", timeout=DEFAULT_TIMEOUT)
-        
+        resp = requests.get(
+            models_url(base_url, backend),
+            headers=_auth_headers(backend, api_key),
+            timeout=DEFAULT_TIMEOUT,
+        )
         if resp.status_code == 200:
             return True, "Connected successfully!"
-        else:
-            return False, f"Server returned status {resp.status_code}"
+        if resp.status_code in (401, 403):
+            return False, "Authentication failed — check your API key."
+        return False, f"Server returned status {resp.status_code}"
     except requests.ConnectionError:
         return False, f"Cannot connect to {base_url}. Make sure your LLM server is running."
     except requests.Timeout:
@@ -112,35 +122,41 @@ def test_connection(base_url: str, backend: str = "lmstudio") -> tuple[bool, str
         return False, f"Unexpected error: {str(e)}"
 
 
-def get_models(base_url: str, backend: str = "lmstudio") -> tuple[list[str], str]:
+def get_models(
+    base_url: str, backend: str = "lmstudio", api_key: str = ""
+) -> tuple[list[str], str]:
     """
-    Fetch available models from the server.
+    Fetch available models from the server (cloud or local).
     Returns (model_list, error_message). error_message is empty on success.
     """
+    if backend == "anthropic":
+        return _anthropic_models(api_key)
+
     base_url = base_url.rstrip("/")
+    if is_cloud(backend) and not api_key:
+        return [], f"An API key is required for {BACKEND_LABELS.get(backend, backend)}."
     try:
+        resp = requests.get(
+            models_url(base_url, backend),
+            headers=_auth_headers(backend, api_key),
+            timeout=DEFAULT_TIMEOUT,
+        )
+        if resp.status_code != 200:
+            if resp.status_code in (401, 403):
+                return [], "Authentication failed — check your API key."
+            return [], f"Failed to fetch models (status {resp.status_code})"
+
+        data = resp.json()
         if backend == "ollama":
-            resp = requests.get(f"{base_url}/api/tags", timeout=DEFAULT_TIMEOUT)
-            if resp.status_code == 200:
-                data = resp.json()
-                # Newer Ollama versions use "model", older ones "name"
-                models = [
-                    m.get("model") or m.get("name", "")
-                    for m in data.get("models", [])
-                ]
-                models = [m for m in models if m]
-                return models, ""
-            else:
-                return [], f"Failed to fetch models (status {resp.status_code})"
-        else:
-            # LM Studio uses OpenAI-compatible endpoint
-            resp = requests.get(f"{base_url}/v1/models", timeout=DEFAULT_TIMEOUT)
-            if resp.status_code == 200:
-                data = resp.json()
-                models = [m["id"] for m in data.get("data", [])]
-                return models, ""
-            else:
-                return [], f"Failed to fetch models (status {resp.status_code})"
+            # Newer Ollama versions use "model", older ones "name"
+            models = [
+                m.get("model") or m.get("name", "")
+                for m in data.get("models", [])
+            ]
+            return [m for m in models if m], ""
+        # OpenAI-compatible (lmstudio, custom, openai, gemini)
+        models = [m["id"] for m in data.get("data", [])]
+        return models, ""
     except requests.ConnectionError:
         return [], f"Cannot connect to {base_url}. Is your LLM server running?"
     except requests.Timeout:
@@ -209,13 +225,13 @@ def unload_model(base_url: str, model_id: str, backend: str = "lmstudio") -> boo
     Best-effort model unload. Never raises exceptions.
     LM Studio: native /api/v1/models/unload (0.4.0+), TTL=0 trick as fallback.
     Ollama: uses keep_alive=0 parameter.
-    Custom: no-op — there is no standardized unload across OpenAI-compatible
-    servers, and the TTL trick would *load* the model on llama-swap. Eviction
-    is left to the server's own policy.
+    Custom / cloud: no-op — custom servers have no standardized unload (and the
+    TTL trick would *load* the model on llama-swap), and cloud backends have no
+    local VRAM to free. Eviction is left to the server / provider.
     Returns True if unload was attempted (not guaranteed to work).
     """
     base_url = base_url.rstrip("/")
-    if backend == "custom":
+    if backend == "custom" or is_cloud(backend):
         return False
     try:
         if backend == "ollama":

@@ -1,8 +1,11 @@
 """Tests for config load/save and preset merging (uses a temp config path)."""
 
+import json
+import os
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 import core.config as config_mod
 
@@ -24,7 +27,9 @@ class TestDefaults(ConfigTestCase):
     def test_default_config_has_required_keys(self):
         defaults = config_mod.get_default_config()
         for key in (
-            "backend", "base_url", "prompter_model", "coder_model",
+            "prompter_backend", "prompter_base_url",
+            "coder_backend", "coder_base_url",
+            "prompter_model", "coder_model", "api_keys",
             "output_folder", "prompter_temperature", "coder_temperature",
             "prompter_max_tokens", "coder_max_tokens", "custom_presets",
         ):
@@ -59,6 +64,76 @@ class TestSaveLoad(ConfigTestCase):
     def test_load_survives_corrupt_json(self):
         config_mod.CONFIG_PATH.write_text("{not json", encoding="utf-8")
         self.assertEqual(config_mod.load_config(), config_mod.get_default_config())
+
+
+class TestLegacyMigration(ConfigTestCase):
+    def test_legacy_single_backend_migrates_to_per_role(self):
+        # A pre-cloud config: one global backend + base_url, no per-role keys
+        config_mod.CONFIG_PATH.write_text(
+            json.dumps({
+                "backend": "ollama",
+                "base_url": "http://localhost:11434",
+                "prompter_model": "phi", "coder_model": "qwen",
+            }),
+            encoding="utf-8",
+        )
+        cfg = config_mod.load_config()
+        self.assertEqual(cfg["prompter_backend"], "ollama")
+        self.assertEqual(cfg["coder_backend"], "ollama")
+        self.assertEqual(cfg["prompter_base_url"], "http://localhost:11434")
+        self.assertEqual(cfg["coder_base_url"], "http://localhost:11434")
+        self.assertIn("api_keys", cfg)
+
+    def test_legacy_config_still_counts_as_existing(self):
+        config_mod.CONFIG_PATH.write_text(
+            json.dumps({
+                "backend": "lmstudio",
+                "base_url": "http://localhost:1234",
+                "prompter_model": "phi", "coder_model": "qwen",
+            }),
+            encoding="utf-8",
+        )
+        self.assertTrue(config_mod.config_exists())
+
+
+class TestRoleEndpoint(ConfigTestCase):
+    def test_resolves_per_role_endpoint(self):
+        cfg = config_mod.get_default_config()
+        cfg["coder_backend"] = "anthropic"
+        cfg["coder_base_url"] = "https://api.anthropic.com"
+        cfg["coder_model"] = "claude-opus-4-8"
+        ep = config_mod.get_role_endpoint(cfg, "coder")
+        self.assertEqual(ep["backend"], "anthropic")
+        self.assertEqual(ep["base_url"], "https://api.anthropic.com")
+        self.assertEqual(ep["model"], "claude-opus-4-8")
+
+    def test_base_url_falls_back_to_backend_default(self):
+        cfg = config_mod.get_default_config()
+        cfg["prompter_backend"] = "openai"
+        cfg["prompter_base_url"] = ""  # not set
+        ep = config_mod.get_role_endpoint(cfg, "prompter")
+        self.assertEqual(ep["base_url"], "https://api.openai.com")
+
+    def test_env_var_takes_precedence_over_config_key(self):
+        cfg = config_mod.get_default_config()
+        cfg["coder_backend"] = "openai"
+        cfg["api_keys"]["openai"] = "from-config"
+        with mock.patch.dict(os.environ, {"OPENAI_API_KEY": "from-env"}):
+            ep = config_mod.get_role_endpoint(cfg, "coder")
+            self.assertEqual(ep["api_key"], "from-env")
+
+    def test_config_key_used_when_no_env_var(self):
+        cfg = config_mod.get_default_config()
+        cfg["coder_backend"] = "openai"
+        cfg["api_keys"]["openai"] = "from-config"
+        with mock.patch.dict(os.environ, {}, clear=True):
+            ep = config_mod.get_role_endpoint(cfg, "coder")
+            self.assertEqual(ep["api_key"], "from-config")
+
+    def test_local_backend_has_no_key(self):
+        cfg = config_mod.get_default_config()
+        ep = config_mod.get_role_endpoint(cfg, "prompter")
+        self.assertEqual(ep["api_key"], "")
 
 
 class TestCustomPresets(ConfigTestCase):

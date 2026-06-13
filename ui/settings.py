@@ -1,76 +1,249 @@
+import os
+
 import streamlit as st
-from core.api import test_connection, get_models, BACKEND_DEFAULTS, BACKEND_LABELS
+from core.api import (
+    test_connection,
+    get_models,
+    is_cloud,
+    BACKEND_DEFAULTS,
+    BACKEND_LABELS,
+    ENV_KEY_NAMES,
+)
 from core.config import load_config, save_config
+
+# Order shown in the backend radios: local first, then clouds
+BACKEND_OPTIONS = ["lmstudio", "ollama", "custom", "openai", "anthropic", "gemini"]
+PROVIDERS = ("openai", "anthropic", "gemini")
 
 
 def _ensure_widget_defaults(config: dict):
     """
-    Ensure all settings widget keys exist in session state with values
-    from the current config. This is the Streamlit-approved pattern:
-    set session state BEFORE widget creation, never use `value=` param.
+    Seed settings widget keys from the current config BEFORE the widgets are
+    created (the Streamlit-approved pattern — never use the `value=` param).
 
-    Only initializes keys that don't already exist, UNLESS
-    _settings_just_opened is True (user navigated to settings).
+    Keys are only initialized when missing, UNLESS _settings_just_opened is
+    True (the user just navigated in), in which case everything re-syncs.
     """
     force_sync = st.session_state.pop("_settings_just_opened", False)
 
     defaults = {
-        "settings_backend": config.get("backend", "lmstudio"),
-        "settings_base_url": config.get("base_url", "http://localhost:1234"),
+        "settings_prompter_backend": config.get("prompter_backend", "lmstudio"),
+        "settings_prompter_base_url": config.get("prompter_base_url", "http://localhost:1234"),
+        "settings_coder_backend": config.get("coder_backend", "lmstudio"),
+        "settings_coder_base_url": config.get("coder_base_url", "http://localhost:1234"),
         "settings_prompter_temp": config.get("prompter_temperature", 0.3),
         "settings_coder_temp": config.get("coder_temperature", 0.1),
         "settings_prompter_tokens": config.get("prompter_max_tokens", 1024),
         "settings_coder_tokens": config.get("coder_max_tokens", 4096),
         "settings_output_folder": config.get("output_folder", "./output"),
     }
-
     for key, value in defaults.items():
         if force_sync or key not in st.session_state:
             st.session_state[key] = value
 
-    # Always clear model widget keys on force sync so they
-    # re-initialize from config with correct index
     if force_sync:
-        for key in [
-            "settings_prompter_model_input",
-            "settings_coder_model_input",
-            "settings_prompter_model_select",
-            "settings_coder_model_select",
-        ]:
-            if key in st.session_state:
-                del st.session_state[key]
+        # Drop derived/model/key widget state so it re-initializes from config
+        for role in ("prompter", "coder"):
+            _clear_role_model_keys(role)
+            st.session_state.pop(f"available_models_{role}", None)
+            st.session_state.pop(f"_models_fetch_sig_{role}", None)
+        for backend in PROVIDERS:
+            st.session_state.pop(f"settings_apikey_{backend}", None)
 
 
-def _clear_model_select_keys():
-    """Drop model selectbox state so it reinitializes from a fresh model list."""
-    for key in ["settings_prompter_model_select", "settings_coder_model_select"]:
-        if key in st.session_state:
-            del st.session_state[key]
+def _clear_role_model_keys(role: str):
+    """Drop a role's model picker state so it reinitializes from a fresh list."""
+    for key in (f"settings_{role}_model_select", f"settings_{role}_model_input"):
+        st.session_state.pop(key, None)
 
 
-def _autofetch_models(base_url: str, backend: str):
-    """
-    Automatically fetch installed models for the current backend/URL.
-    Attempted once per (backend, url) combination so an offline server
-    doesn't hang the page on every rerun. Returns an error string ("" if ok).
-    """
-    fetch_sig = f"{backend}|{base_url}"
-    if st.session_state.get("available_models"):
+def _effective_key(backend: str, config: dict) -> str:
+    """Resolved API key for the settings UI: env var first, then the value
+    typed into (or saved for) this provider. Empty for local backends."""
+    if not is_cloud(backend):
         return ""
-    if st.session_state.get("_models_fetch_sig") == fetch_sig:
-        return st.session_state.get("_models_fetch_error", "")
+    env_name = ENV_KEY_NAMES.get(backend)
+    if env_name and os.environ.get(env_name, "").strip():
+        return os.environ[env_name].strip()
+    widget_key = f"settings_apikey_{backend}"
+    if widget_key in st.session_state:
+        return st.session_state[widget_key].strip()
+    return (config.get("api_keys") or {}).get(backend, "").strip()
 
-    st.session_state["_models_fetch_sig"] = fetch_sig
-    with st.spinner("Looking for installed models..."):
-        models, err = get_models(base_url, backend)
+
+def _render_api_key_field(backend: str, config: dict):
+    """One masked key field per cloud provider, or a notice that an
+    environment variable is supplying it."""
+    label = BACKEND_LABELS.get(backend, backend)
+    env_name = ENV_KEY_NAMES.get(backend, "")
+    if env_name and os.environ.get(env_name, "").strip():
+        st.success(f"{label}: using `{env_name}` from your environment.")
+        return
+
+    widget_key = f"settings_apikey_{backend}"
+    if widget_key not in st.session_state:
+        st.session_state[widget_key] = (config.get("api_keys") or {}).get(backend, "")
+    st.text_input(
+        f"{label} API key",
+        type="password",
+        key=widget_key,
+        placeholder=f"Paste your key (or set {env_name})" if env_name else "Paste your key",
+        help="Saved to config.json (git-ignored). An environment variable takes precedence.",
+    )
+
+
+def _autofetch_models_for_role(role: str, base_url: str, backend: str, api_key: str) -> str:
+    """
+    Auto-fetch models for one role, once per (backend, url, key) combination
+    so an offline/unauthenticated endpoint doesn't re-query every rerun.
+    Returns an error string ("" on success or when skipped).
+    """
+    if is_cloud(backend) and not api_key:
+        return ""  # nothing to fetch without a key — the section warns separately
+
+    fetch_sig = f"{backend}|{base_url}|{api_key}"
+    if st.session_state.get(f"available_models_{role}"):
+        return ""
+    if st.session_state.get(f"_models_fetch_sig_{role}") == fetch_sig:
+        return st.session_state.get(f"_models_fetch_error_{role}", "")
+
+    st.session_state[f"_models_fetch_sig_{role}"] = fetch_sig
+    with st.spinner(f"Looking for {role} models..."):
+        models, err = get_models(base_url, backend, api_key)
 
     if models:
-        st.session_state["available_models"] = models
-        st.session_state["_models_fetch_error"] = ""
-        _clear_model_select_keys()
+        st.session_state[f"available_models_{role}"] = models
+        st.session_state[f"_models_fetch_error_{role}"] = ""
+        _clear_role_model_keys(role)
     else:
-        st.session_state["_models_fetch_error"] = err
-    return st.session_state["_models_fetch_error"]
+        st.session_state[f"_models_fetch_error_{role}"] = err
+    return st.session_state.get(f"_models_fetch_error_{role}", "")
+
+
+def _render_role_endpoint(role: str, label: str, config: dict) -> dict:
+    """
+    Render one role's backend / endpoint / model / params block.
+    Returns {backend, base_url, model}.
+    """
+    st.markdown(f"### {label}")
+
+    backend = st.radio(
+        f"{label} backend",
+        options=BACKEND_OPTIONS,
+        format_func=lambda x: BACKEND_LABELS[x],
+        horizontal=True,
+        key=f"settings_{role}_backend",
+        label_visibility="collapsed",
+    )
+
+    # On an actual backend switch, reset URL to that backend's default and
+    # drop this role's fetched model list.
+    prev = st.session_state.get(f"_settings_prev_backend_{role}")
+    if prev is not None and prev != backend:
+        st.session_state[f"settings_{role}_base_url"] = BACKEND_DEFAULTS.get(backend, "")
+        st.session_state.pop(f"available_models_{role}", None)
+        st.session_state.pop(f"_models_fetch_sig_{role}", None)
+        _clear_role_model_keys(role)
+    st.session_state[f"_settings_prev_backend_{role}"] = backend
+
+    default_url = BACKEND_DEFAULTS.get(backend, "http://localhost:1234")
+
+    if is_cloud(backend):
+        # Cloud endpoints are fixed — show, don't edit
+        base_url = default_url
+        st.session_state[f"settings_{role}_base_url"] = default_url
+        st.caption(f"Endpoint: `{default_url}`")
+    else:
+        base_url = st.text_input(
+            f"{label} base URL",
+            placeholder=default_url,
+            key=f"settings_{role}_base_url",
+            help=f"Default for {BACKEND_LABELS[backend]}: {default_url}",
+        )
+        base_url = (base_url or default_url).strip().rstrip("/")
+        if backend == "custom":
+            st.caption(
+                "Any OpenAI-compatible server: llama.cpp, llama-swap, vLLM, "
+                "Jan, KoboldCpp, TabbyAPI…"
+            )
+
+    api_key = _effective_key(backend, config)
+    if is_cloud(backend) and not api_key:
+        st.warning(
+            f"Add your {BACKEND_LABELS[backend]} API key in **API keys** above "
+            "to list models."
+        )
+
+    fetch_error = _autofetch_models_for_role(role, base_url, backend, api_key)
+
+    col_test, col_refresh = st.columns(2)
+    with col_test:
+        if st.button("Test connection", key=f"settings_{role}_test", use_container_width=True):
+            with st.spinner("Testing connection..."):
+                ok, msg = test_connection(base_url, backend, api_key)
+            if ok:
+                st.success(msg)
+                models, err = get_models(base_url, backend, api_key)
+                if models:
+                    st.session_state[f"available_models_{role}"] = models
+                    _clear_role_model_keys(role)
+                    st.rerun()
+                elif err:
+                    st.warning(f"Connected but couldn't fetch models: {err}")
+            else:
+                st.error(msg)
+    with col_refresh:
+        if st.button("Refresh models", key=f"settings_{role}_refresh", use_container_width=True):
+            st.session_state.pop(f"available_models_{role}", None)
+            st.session_state.pop(f"_models_fetch_sig_{role}", None)
+            st.rerun()
+
+    model = _render_model_picker(role, label, config, fetch_error)
+
+    col_temp, col_tokens = st.columns(2)
+    with col_temp:
+        st.slider(
+            f"{label} temperature",
+            min_value=0.0,
+            max_value=1.5,
+            step=0.05,
+            key=f"settings_{role}_temp",
+        )
+    with col_tokens:
+        st.number_input(
+            f"{label} max tokens",
+            min_value=128,
+            max_value=32768,
+            step=128,
+            key=f"settings_{role}_tokens",
+        )
+
+    return {"backend": backend, "base_url": base_url, "model": model}
+
+
+def _render_model_picker(role: str, label: str, config: dict, fetch_error: str) -> str:
+    """Dropdown when models were detected, free-text fallback otherwise."""
+    available = st.session_state.get(f"available_models_{role}", [])
+    saved_model = config.get(f"{role}_model", "")
+
+    if not available:
+        if fetch_error:
+            st.caption(f"Couldn't list models: {fetch_error}")
+        key_in = f"settings_{role}_model_input"
+        if key_in not in st.session_state:
+            st.session_state[key_in] = saved_model
+        return st.text_input(
+            f"{label} model ID",
+            placeholder="Enter the model id manually",
+            key=key_in,
+        )
+
+    st.caption(f"{len(available)} model(s) available.")
+    key_sel = f"settings_{role}_model_select"
+    if key_sel not in st.session_state:
+        idx = available.index(saved_model) if saved_model in available else 0
+        st.session_state[key_sel] = available[idx]
+    return st.selectbox(f"{label} model", options=available, key=key_sel)
 
 
 def render_settings():
@@ -85,204 +258,46 @@ def render_settings():
     with col_title:
         st.markdown("## Settings")
 
-    st.markdown("Configure your LLM server connection and model preferences.")
+    st.markdown(
+        "Configure each role independently — run both locally, or mix a local "
+        "Prompter with a cloud Coder for frontier-quality code on a small GPU."
+    )
     st.markdown("---")
 
     config = st.session_state.get("config", load_config())
-
-    # Initialize widget keys from config (avoids the value=/key= conflict)
     _ensure_widget_defaults(config)
 
-    # ── Backend Selection ──
-    st.markdown("### Backend")
-    backend_options = ["lmstudio", "ollama", "custom"]
-    backend_labels = BACKEND_LABELS
+    # Which cloud providers are currently selected by either role (read from
+    # session_state, which holds the persisted/previous radio value)
+    selected_backends = {
+        st.session_state.get("settings_prompter_backend", "lmstudio"),
+        st.session_state.get("settings_coder_backend", "lmstudio"),
+    }
+    cloud_in_use = sorted(b for b in selected_backends if is_cloud(b))
 
-    selected_backend = st.radio(
-        "Select your LLM backend",
-        options=backend_options,
-        format_func=lambda x: backend_labels[x],
-        horizontal=True,
-        key="settings_backend",
-    )
+    if cloud_in_use:
+        st.markdown("### API keys")
+        for backend in cloud_in_use:
+            _render_api_key_field(backend, config)
+        st.markdown("---")
 
-    if selected_backend == "custom":
-        st.caption(
-            "Any OpenAI-compatible server: llama.cpp server, llama-swap, "
-            "vLLM, Jan, KoboldCpp, TabbyAPI… Model listing uses `/v1/models`; "
-            "model unloading is left to the server (e.g. llama-swap's TTL)."
-        )
+    prompter = _render_role_endpoint("prompter", "Prompter", config)
+    st.markdown("---")
+    coder = _render_role_endpoint("coder", "Coder", config)
 
-    # On an actual backend switch (not every rerun), reset URL to that
-    # backend's default and clear the fetched model list
-    prev_backend = st.session_state.get("_settings_prev_backend")
-    if prev_backend is not None and prev_backend != selected_backend:
-        st.session_state["settings_base_url"] = BACKEND_DEFAULTS.get(
-            selected_backend, "http://localhost:1234"
-        )
-        st.session_state["available_models"] = []
-        st.session_state.pop("_models_fetch_sig", None)
-        _clear_model_select_keys()
-    st.session_state["_settings_prev_backend"] = selected_backend
-
-    default_url = BACKEND_DEFAULTS.get(selected_backend, "http://localhost:1234")
-
-    st.markdown("### Server connection")
-    base_url = st.text_input(
-        "Base URL",
-        placeholder=default_url,
-        key="settings_base_url",
-        help=f"Default for {backend_labels[selected_backend]}: {default_url}",
-    )
-    base_url = (base_url or default_url).strip().rstrip("/")
-
-    # ── Auto-detect installed models (works for LM Studio AND Ollama) ──
-    fetch_error = _autofetch_models(base_url, selected_backend)
-
-    col_test, col_refresh, col_status = st.columns([1, 1, 2])
-    with col_test:
-        test_clicked = st.button(
-            "Test connection",
-            key="test_connection_btn",
-            use_container_width=True,
-        )
-    with col_refresh:
-        if st.button("Refresh models", key="refresh_models_btn", use_container_width=True):
-            # Reset the autofetch guard so the next run re-queries the server
-            st.session_state["available_models"] = []
-            st.session_state.pop("_models_fetch_sig", None)
-            st.rerun()
-
-    if test_clicked:
-        with st.spinner("Testing connection..."):
-            success, message = test_connection(base_url, selected_backend)
-        if success:
-            st.success(message)
-            models, err = get_models(base_url, selected_backend)
-            if models:
-                st.session_state["available_models"] = models
-                _clear_model_select_keys()
-                st.rerun()
-            elif err:
-                st.warning(f"Connected but couldn't fetch models: {err}")
-        else:
-            st.error(message)
-
-    # ── Model Selection ──
-    st.markdown("### Models")
-
-    available_models = st.session_state.get("available_models", [])
-
-    if not available_models:
-        if fetch_error:
-            st.warning(
-                f"Couldn't detect installed models: {fetch_error} "
-                "Start your server and click **Refresh models**, "
-                "or enter the model IDs manually below."
-            )
-        else:
-            st.info("No models detected. Click **Refresh models** or enter IDs manually.")
-
-        # Initialize model text input keys if not set
-        if "settings_prompter_model_input" not in st.session_state:
-            st.session_state["settings_prompter_model_input"] = config.get("prompter_model", "")
-        if "settings_coder_model_input" not in st.session_state:
-            st.session_state["settings_coder_model_input"] = config.get("coder_model", "")
-
-        prompter_model = st.text_input(
-            "Prompter Model ID",
-            placeholder="e.g., phi-4-mini-reasoning",
-            key="settings_prompter_model_input",
-        )
-        coder_model = st.text_input(
-            "Coder Model ID",
-            placeholder="e.g., qwen2.5-coder-14b-instruct",
-            key="settings_coder_model_input",
-        )
-    else:
-        st.caption(f"{len(available_models)} installed model(s) detected.")
-
-        # Dropdown selection from fetched models
-        prompter_idx = 0
-        if config.get("prompter_model") in available_models:
-            prompter_idx = available_models.index(config["prompter_model"])
-
-        coder_idx = (
-            min(1, len(available_models) - 1) if len(available_models) > 1 else 0
-        )
-        if config.get("coder_model") in available_models:
-            coder_idx = available_models.index(config["coder_model"])
-
-        # Initialize selectbox keys if not already set
-        if "settings_prompter_model_select" not in st.session_state:
-            st.session_state["settings_prompter_model_select"] = (
-                available_models[prompter_idx] if available_models else None
-            )
-        if "settings_coder_model_select" not in st.session_state:
-            st.session_state["settings_coder_model_select"] = (
-                available_models[coder_idx] if available_models else None
-            )
-
-        prompter_model = st.selectbox(
-            "Prompter Model (small, fast reasoning)",
-            options=available_models,
-            key="settings_prompter_model_select",
-        )
-
-        coder_model = st.selectbox(
-            "Coder Model (larger, coding-focused)",
-            options=available_models,
-            key="settings_coder_model_select",
-        )
-
-    # Warning for same model
-    if prompter_model and coder_model and prompter_model == coder_model:
+    # Same local model for both roles defeats the VRAM swap
+    if (
+        prompter["model"]
+        and prompter["model"] == coder["model"]
+        and prompter["backend"] == coder["backend"]
+    ):
         st.warning(
-            "You've selected the same model for both roles. "
-            "This works, but using different models is recommended."
-        )
-
-    # ── Advanced Settings ──
-    st.markdown("### Generation parameters")
-
-    col1, col2 = st.columns(2)
-    with col1:
-        st.markdown("**Prompter**")
-        prompter_temp = st.slider(
-            "Temperature",
-            min_value=0.0,
-            max_value=1.5,
-            step=0.05,
-            key="settings_prompter_temp",
-            help="Lower = more focused, Higher = more creative",
-        )
-        prompter_max_tokens = st.number_input(
-            "Max Tokens",
-            min_value=128,
-            max_value=8192,
-            step=128,
-            key="settings_prompter_tokens",
-        )
-
-    with col2:
-        st.markdown("**Coder**")
-        coder_temp = st.slider(
-            "Temperature",
-            min_value=0.0,
-            max_value=1.5,
-            step=0.05,
-            key="settings_coder_temp",
-            help="Lower = more deterministic code",
-        )
-        coder_max_tokens = st.number_input(
-            "Max Tokens",
-            min_value=128,
-            max_value=16384,
-            step=256,
-            key="settings_coder_tokens",
+            "Both roles use the same model on the same backend. This works, "
+            "but different models are recommended."
         )
 
     # ── Output Folder ──
+    st.markdown("---")
     st.markdown("### Output")
     output_folder = st.text_input(
         "Output folder",
@@ -290,31 +305,37 @@ def render_settings():
         help="Where generated code files will be saved",
     )
 
-    # ── Save Button ──
+    # ── Save ──
     st.markdown("---")
-    if st.button(
-        "Save settings",
-        key="save_settings_btn",
-        type="primary",
-        use_container_width=True,
-    ):
+    if st.button("Save settings", key="save_settings_btn", type="primary", use_container_width=True):
+        # Preserve saved keys for providers not rendered (env-supplied or
+        # unselected); overwrite only fields the user actually edited.
+        saved_keys = {"openai": "", "anthropic": "", "gemini": ""}
+        saved_keys.update(config.get("api_keys") or {})
+        for backend in PROVIDERS:
+            widget_key = f"settings_apikey_{backend}"
+            if widget_key in st.session_state:
+                saved_keys[backend] = st.session_state[widget_key].strip()
+
         new_config = {
-            "backend": selected_backend,
-            "base_url": base_url,
-            "prompter_model": prompter_model,
-            "coder_model": coder_model,
+            "prompter_backend": prompter["backend"],
+            "prompter_base_url": prompter["base_url"],
+            "coder_backend": coder["backend"],
+            "coder_base_url": coder["base_url"],
+            "prompter_model": prompter["model"],
+            "coder_model": coder["model"],
+            "api_keys": saved_keys,
             "output_folder": output_folder,
-            "prompter_temperature": prompter_temp,
-            "coder_temperature": coder_temp,
-            "prompter_max_tokens": prompter_max_tokens,
-            "coder_max_tokens": coder_max_tokens,
+            "prompter_temperature": st.session_state["settings_prompter_temp"],
+            "coder_temperature": st.session_state["settings_coder_temp"],
+            "prompter_max_tokens": st.session_state["settings_prompter_tokens"],
+            "coder_max_tokens": st.session_state["settings_coder_tokens"],
             "custom_presets": config.get("custom_presets", {}),
         }
         save_config(new_config)
         st.session_state["config"] = new_config
 
-        if prompter_model and coder_model:
-            # Return to the app automatically — no dead end after saving
+        if prompter["model"] and coder["model"]:
             st.session_state["show_settings"] = False
             st.session_state["_settings_saved_toast"] = True
             st.rerun()

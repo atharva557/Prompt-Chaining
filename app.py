@@ -9,8 +9,8 @@ import time
 
 import streamlit as st
 
-from core.config import config_exists, load_config
-from core.api import test_connection, unload_model, BACKEND_LABELS
+from core.config import config_exists, load_config, get_role_endpoint
+from core.api import test_connection, unload_model, is_cloud, BACKEND_LABELS
 from core.history import load_history, add_entry, delete_entry, clear_history
 from core.streaming import stream_completion, PROMPTER_TIMEOUT, CODER_TIMEOUT
 from ui.styles import (
@@ -69,7 +69,6 @@ def init_session_state():
         "config": None,
         "is_running": False,
         "show_settings": False,
-        "available_models": [],
         # One-shot flags so retries/generation only run when explicitly
         # requested, never as a side effect of an unrelated rerun.
         "prompter_retry": False,
@@ -153,9 +152,11 @@ if not config_exists() and not st.session_state.get("_first_run_handled"):
 
 # Cache sidebar connection check to avoid latency on every rerun
 @st.cache_data(ttl=30, show_spinner=False)
-def _check_connection(base_url: str, backend: str) -> bool:
+def _check_connection(base_url: str, backend: str, api_key: str) -> bool:
     """Cached connection check — refreshes every 30 seconds."""
-    ok, _ = test_connection(base_url, backend)
+    if is_cloud(backend) and not api_key:
+        return False
+    ok, _ = test_connection(base_url, backend, api_key)
     return ok
 
 with st.sidebar:
@@ -216,22 +217,16 @@ with st.sidebar:
 
     render_divider()
 
-    # Connection status (cached to avoid sidebar lag)
-    st.markdown("**Server**")
-    if config.get("base_url"):
+    # Per-role endpoint: backend label, model, and a connection badge each
+    st.markdown("**Endpoints**")
+    for role, role_label in (("prompter", "Prompter"), ("coder", "Coder")):
+        ep = get_role_endpoint(config, role)
+        backend_label = BACKEND_LABELS.get(ep["backend"], ep["backend"])
+        render_model_info(f"{role_label} · {backend_label}", ep["model"])
         connected = _check_connection(
-            config["base_url"],
-            config.get("backend", "lmstudio")
-        )
+            ep["base_url"], ep["backend"], ep["api_key"]
+        ) if ep["base_url"] else False
         render_connection_badge(connected)
-    else:
-        render_connection_badge(False)
-
-    render_divider()
-
-    # Model info
-    render_model_info("Prompter", config.get("prompter_model", ""))
-    render_model_info("Coder", config.get("coder_model", ""))
 
     render_divider()
 
@@ -246,10 +241,6 @@ with st.sidebar:
         if st.session_state["show_settings"]:
             st.session_state["_settings_just_opened"] = True
         st.rerun()
-
-    # Backend indicator
-    backend = config.get("backend", "lmstudio")
-    st.caption(f"Backend: {BACKEND_LABELS.get(backend, backend)}")
 
 # ═══════════════════════════════════════════════════════
 #  Main Content
@@ -298,7 +289,7 @@ render_step_indicator(st.session_state["current_step"])
 # ═══════════════════════════════════════════════════════
 
 def run_streaming_generation(
-    model_key: str,
+    role: str,
     system_prompt: str,
     user_message: str,
     temperature: float,
@@ -313,7 +304,9 @@ def run_streaming_generation(
     Run a streaming generation and display output in real-time.
 
     Args:
-        model_key: Config key for the model name ('prompter_model' or 'coder_model').
+        role: 'prompter' or 'coder' — its backend/base_url/model/api_key are
+            resolved via get_role_endpoint(), so each role can use a different
+            (local or cloud) backend.
         system_prompt: System prompt string.
         user_message: User message to send.
         temperature: Sampling temperature for this role.
@@ -331,22 +324,26 @@ def run_streaming_generation(
     Returns:
         tuple: (full_output: str, error: str). error is empty on success.
     """
+    endpoint = get_role_endpoint(config, role)
     full_output = ""
     first_token = True
     chunk_count = 0
+    usage: dict = {}
     start_time = time.perf_counter()
 
     try:
         stream = stream_completion(
-            base_url=config["base_url"],
-            model=config[model_key],
+            base_url=endpoint["base_url"],
+            model=endpoint["model"],
             system_prompt=system_prompt,
             user_message=user_message,
             temperature=temperature,
             max_tokens=max_tokens,
-            backend=config.get("backend", "lmstudio"),
+            backend=endpoint["backend"],
             timeout=timeout,
             messages=messages,
+            api_key=endpoint["api_key"],
+            usage_out=usage,
         )
 
         # Create a placeholder for streaming output
@@ -367,12 +364,21 @@ def run_streaming_generation(
                 output_placeholder.markdown(full_output)
 
         elapsed = time.perf_counter() - start_time
+        stats = []
         if chunk_count and elapsed > 0:
             # One SSE chunk is roughly one token
-            st.caption(
+            stats.append(
                 f"~{chunk_count} tokens in {elapsed:.1f}s "
                 f"({chunk_count / elapsed:.1f} tok/s)"
             )
+        if usage.get("input_tokens") is not None or usage.get("output_tokens") is not None:
+            # Exact billed counts (cloud backends report these)
+            stats.append(
+                f"{usage.get('input_tokens', '?')} in / "
+                f"{usage.get('output_tokens', '?')} out tokens"
+            )
+        if stats:
+            st.caption(" · ".join(stats))
 
         return full_output, ""
 
@@ -427,25 +433,29 @@ def render_pipeline_checklist(stages: list[dict]):
     st.markdown(html, unsafe_allow_html=True)
 
 
+def _role_is_local(role: str) -> bool:
+    """True when the role's backend is a local server (occupies VRAM)."""
+    return not is_cloud(get_role_endpoint(config, role)["backend"])
+
+
 def _stop_prompter():
     """on_click for the Stop button shown while the prompter streams.
     The click itself interrupts the running script at its next placeholder
     update; this callback just records the consequences."""
     st.session_state["_gen_stopped_toast"] = True
-    st.session_state["needs_swap"] = True  # the prompter is loaded now
+    # A local prompter is now resident in VRAM and must be swapped out before
+    # the coder runs; a cloud prompter occupies nothing.
+    st.session_state["needs_swap"] = _role_is_local("prompter")
 
 
 def run_prompter(status_placeholder) -> tuple[str, str]:
     """Stream the prompter model. Returns (result, error)."""
 
-    # A coder model left loaded by a chat or an earlier run would fight
-    # the prompter for VRAM — evict it first.
+    # A local coder model left loaded by a chat or earlier run would fight the
+    # prompter for VRAM — evict it first. (No-op for a cloud coder.)
     if st.session_state.get("last_model_role") == "coder":
-        unload_model(
-            config["base_url"],
-            config["coder_model"],
-            config.get("backend", "lmstudio"),
-        )
+        coder = get_role_endpoint(config, "coder")
+        unload_model(coder["base_url"], coder["model"], coder["backend"])
     st.session_state["last_model_role"] = "prompter"
 
     def show_status(loaded: bool):
@@ -465,7 +475,7 @@ def run_prompter(status_placeholder) -> tuple[str, str]:
     st.markdown("### Prompter output")
 
     return run_streaming_generation(
-        model_key="prompter_model",
+        role="prompter",
         system_prompt=st.session_state["prompter_system"],
         user_message=st.session_state["task_description"],
         temperature=config["prompter_temperature"],
@@ -507,7 +517,9 @@ if st.session_state["current_step"] == STEP_TASK_INPUT:
             )
         else:
             st.session_state["generated_prompt"] = result
-            st.session_state["needs_swap"] = True  # prompter is now loaded
+            # A local prompter now occupies VRAM and must be swapped out
+            # before the coder runs; a cloud prompter occupies nothing.
+            st.session_state["needs_swap"] = _role_is_local("prompter")
             st.session_state["current_step"] = STEP_PROMPT_REVIEW
             # Drop stale widget state so the review text area shows the new prompt
             st.session_state.pop("prompt_review_area", None)
@@ -542,7 +554,7 @@ elif st.session_state["current_step"] == STEP_PROMPT_REVIEW:
             )
         else:
             st.session_state["generated_prompt"] = result
-            st.session_state["needs_swap"] = True  # prompter is now loaded
+            st.session_state["needs_swap"] = _role_is_local("prompter")
             # Drop stale widget state so the text area picks up the new prompt
             st.session_state.pop("prompt_review_area", None)
             st.rerun()
@@ -586,9 +598,9 @@ elif st.session_state["current_step"] == STEP_GENERATING:
         st.session_state["is_running"] = True
         status_placeholder = st.empty()
 
-        # Only swap if the prompter actually ran since the last unload —
-        # regenerating from the output page would otherwise reload the
-        # prompter just to unload it (slow on Ollama).
+        # Only swap if a local prompter actually ran since the last unload —
+        # regenerating from the output page (or a cloud prompter) would
+        # otherwise trigger a pointless unload.
         if st.session_state.pop("needs_swap", False):
             with status_placeholder.container():
                 render_pipeline_checklist([
@@ -598,11 +610,8 @@ elif st.session_state["current_step"] == STEP_GENERATING:
                     {"label": "Generating code", "state": "pending"},
                 ])
 
-            unload_model(
-                config["base_url"],
-                config["prompter_model"],
-                config.get("backend", "lmstudio"),
-            )
+            prompter = get_role_endpoint(config, "prompter")
+            unload_model(prompter["base_url"], prompter["model"], prompter["backend"])
 
         # The coder actually loads during the first request — the checklist
         # flips to "loaded" when the first token arrives.
@@ -655,7 +664,7 @@ elif st.session_state["current_step"] == STEP_GENERATING:
         st.session_state["last_model_role"] = "coder"
 
         result, error = run_streaming_generation(
-            model_key="coder_model",
+            role="coder",
             system_prompt=st.session_state["coder_system"],
             user_message=st.session_state["generated_prompt"],
             temperature=config["coder_temperature"],
@@ -738,12 +747,9 @@ elif st.session_state["current_step"] == STEP_CODE_OUTPUT:
         st.rerun()
 
     elif action == "start_over":
-        # Unload coder model to free VRAM, then reset for a fresh task
-        unload_model(
-            config["base_url"],
-            config["coder_model"],
-            config.get("backend", "lmstudio"),
-        )
+        # Unload a local coder model to free VRAM, then reset for a fresh task
+        coder = get_role_endpoint(config, "coder")
+        unload_model(coder["base_url"], coder["model"], coder["backend"])
         st.session_state["last_model_role"] = None
         reset_pipeline()
         st.rerun()

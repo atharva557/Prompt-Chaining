@@ -5,6 +5,7 @@ are handled by the app, so these tests only verify that every page renders
 without exceptions and that navigation moves between pages correctly.
 """
 
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -82,6 +83,73 @@ class TestNavigation(AppSmokeTestCase):
         self.assertFalse(at.exception)
         self.assertEqual(at.session_state["page"], "pipeline")
         self.assertEqual(at.session_state["current_step"], 0)
+
+
+class TestLegacyConfigBoots(AppSmokeTestCase):
+    """A pre-cloud config file must migrate and boot the app unchanged."""
+
+    def test_legacy_config_renders_landing(self):
+        # Overwrite the temp config with the old single-backend schema
+        config_mod.CONFIG_PATH.write_text(
+            json.dumps({
+                "backend": "lmstudio",
+                "base_url": "http://localhost:1234",
+                "prompter_model": "test-prompter",
+                "coder_model": "test-coder",
+            }),
+            encoding="utf-8",
+        )
+        at = self._run_app()
+        self.assertFalse(at.exception)
+        # Migrated config exposes per-role endpoints
+        cfg = at.session_state["config"]
+        self.assertEqual(cfg["prompter_backend"], "lmstudio")
+        self.assertEqual(cfg["coder_backend"], "lmstudio")
+        self.assertIn("landing_pipeline_btn", [b.key for b in at.button])
+
+
+class TestHybridConfigBoots(AppSmokeTestCase):
+    """Local Prompter + cloud Coder must render landing + the per-role sidebar
+    badges without a network call (no key → connection check short-circuits)."""
+
+    def test_landing_and_sidebar_render_for_hybrid(self):
+        config_mod.CONFIG_PATH.write_text(
+            json.dumps({
+                "prompter_backend": "lmstudio",
+                "prompter_base_url": "http://localhost:1234",
+                "coder_backend": "anthropic",
+                "coder_base_url": "https://api.anthropic.com",
+                "prompter_model": "test-prompter",
+                "coder_model": "claude-opus-4-8",
+                "api_keys": {"openai": "", "anthropic": "", "gemini": ""},
+            }),
+            encoding="utf-8",
+        )
+        at = self._run_app()
+        self.assertFalse(at.exception)
+        self.assertIn("landing_pipeline_btn", [b.key for b in at.button])
+
+
+class TestSettingsPage(AppSmokeTestCase):
+    def test_settings_renders_for_cloud_backend(self):
+        # A coder on a cloud backend should render the API-keys section + save
+        config_mod.CONFIG_PATH.write_text(
+            json.dumps({
+                "prompter_backend": "lmstudio",
+                "prompter_base_url": "http://localhost:1234",
+                "coder_backend": "anthropic",
+                "coder_base_url": "https://api.anthropic.com",
+                "prompter_model": "test-prompter",
+                "coder_model": "claude-opus-4-8",
+                "api_keys": {"openai": "", "anthropic": "", "gemini": ""},
+            }),
+            encoding="utf-8",
+        )
+        at = self._run_app()
+        at.session_state["show_settings"] = True
+        at.run()
+        self.assertFalse(at.exception)
+        self.assertIn("save_settings_btn", [b.key for b in at.button])
 
 
 class TestPipelinePages(AppSmokeTestCase):

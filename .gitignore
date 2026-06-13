@@ -10,3 +10,10 @@ build/
 .venv/
 venv/
 .claude/settings.local.json
+
+# Internal / working docs — kept locally, not published (README is the only public doc)
+HANDOVER.md
+MARKET_RESEARCH.md
+PROJECT_REVIEW.md
+PROMPTCHAIN_SPEC.md
+docs/

@@ -24,7 +24,8 @@ Running local LLMs on consumer hardware (8–16 GB VRAM) usually means you can o
 | 🔗 | **Two-model pipeline** | Prompter → review / edit → Coder |
 | 📡 | **Real-time streaming** | Token-by-token output via SSE, with tokens/sec stats |
 | 🧠 | **VRAM-aware model swapping** | Automatically unloads the Prompter before loading the Coder |
-| 🔌 | **Dual backend support** | LM Studio *and* Ollama — switch with one click |
+| 🔌 | **Per-role backends** | Mix local and cloud: LM Studio, Ollama, any OpenAI-compatible server, plus OpenAI, Claude, and Gemini — chosen separately for each role |
+| 💸 | **Local Prompter + cloud Coder** | Refine prompts for free on a local model, then send one clean prompt to a frontier cloud Coder — fewer wasted paid generations |
 | 🔍 | **Auto model detection** | Installed models are detected and listed automatically |
 | 🕘 | **Run history** | Past runs persist across restarts; reopen or delete them from the sidebar |
 | ⚡ | **Side-by-side output** | Edit the prompt next to the generated code and regenerate in place |
@@ -74,8 +75,10 @@ Running local LLMs on consumer hardware (8–16 GB VRAM) usually means you can o
 ## 📦 Requirements
 
 - **Python 3.10+**
-- **LM Studio** (default) or **Ollama** running locally
-- At least **2 models** downloaded / available on the server
+- A model source for each role — any mix of:
+  - **Local:** LM Studio, Ollama, or any OpenAI-compatible server (llama.cpp, llama-swap, vLLM, Jan…)
+  - **Cloud:** OpenAI, Anthropic (Claude), or Google Gemini — bring your own API key
+- The Anthropic backend needs the `anthropic` package (in `requirements.txt`; lazily imported, so local-only setups can skip it)
 
 <br>
 
@@ -106,18 +109,26 @@ pytest
 
 ## ⚙️ Configuration
 
+Each role (Prompter / Coder) is configured independently in **Settings**:
+
 | Setting | Default | Notes |
 |---|---|---|
-| Backend | LM Studio | Toggle between LM Studio (`localhost:1234`) and Ollama (`localhost:11434`) |
-| Prompter Model | — | Pick a small, fast model for prompt generation |
-| Coder Model | — | Pick a larger, code-focused model |
-| Prompter Temperature | 0.3 | Higher = more creative prompts |
-| Coder Temperature | 0.1 | Lower = more deterministic code |
-| Prompter Max Tokens | 1 024 | Max output length for the Prompter |
-| Coder Max Tokens | 4 096 | Max output length for the Coder |
+| Backend (per role) | LM Studio | LM Studio, Ollama, Custom (OpenAI-compatible), OpenAI, Anthropic, or Gemini — chosen separately for the Prompter and the Coder |
+| Base URL (per role) | per-backend | Editable for local/custom backends; fixed for cloud providers |
+| Model (per role) | — | Auto-detected from the server, or entered manually |
+| Temperature (per role) | 0.3 / 0.1 | Lower = more deterministic |
+| Max Tokens (per role) | 1 024 / 4 096 | Max output length |
 | Output Folder | `./output` | Where generated code files are saved |
 
-All settings are persisted in `config.json` (git-ignored).
+**API keys** for the cloud backends are read from environment variables first —
+`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY` — and fall back to keys
+entered in Settings. Settings (including any typed-in keys) persist in
+`config.json` (git-ignored).
+
+> **Tip — the local-Prompter + cloud-Coder hybrid:** it doesn't lower paid input
+> tokens (the refined prompt is longer), but it cuts the *number* of paid
+> generations — the free local review gate means the one expensive cloud
+> generation lands right more often, so you re-roll far less.
 
 <br>
 

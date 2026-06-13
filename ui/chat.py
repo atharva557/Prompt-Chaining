@@ -11,7 +11,8 @@ import time
 
 import streamlit as st
 
-from core.api import unload_model
+from core.api import unload_model, is_cloud, BACKEND_LABELS
+from core.config import get_role_endpoint
 from core.streaming import stream_completion, PROMPTER_TIMEOUT, CODER_TIMEOUT
 
 # Chat-specific defaults: the pipeline system prompts demand rigid output
@@ -25,7 +26,6 @@ ROLE_META = {
     "prompter": {
         "label": "Prompter",
         "other": "coder",
-        "model_key": "prompter_model",
         "temp_key": "prompter_temperature",
         "tokens_key": "prompter_max_tokens",
         "timeout": PROMPTER_TIMEOUT,
@@ -35,7 +35,6 @@ ROLE_META = {
     "coder": {
         "label": "Coder",
         "other": "prompter",
-        "model_key": "coder_model",
         "temp_key": "coder_temperature",
         "tokens_key": "coder_max_tokens",
         "timeout": CODER_TIMEOUT,
@@ -68,13 +67,15 @@ def render_chat(role: str, config: dict) -> None:
             {"role": "assistant", "content": partial + "\n\n*— stopped —*"}
         )
 
-    model = config.get(meta["model_key"], "")
+    endpoint = get_role_endpoint(config, role)
+    model = endpoint["model"]
 
     col_title, col_clear = st.columns([4, 1])
     with col_title:
         st.markdown(f"## {meta['label']} chat")
         st.caption(
-            f"Chatting directly with `{model}` · "
+            f"Chatting directly with `{model}` on "
+            f"{BACKEND_LABELS.get(endpoint['backend'], endpoint['backend'])} · "
             f"temperature {config.get(meta['temp_key'], 0.3)}"
         )
     with col_clear:
@@ -108,17 +109,15 @@ def render_chat(role: str, config: dict) -> None:
         st.markdown(user_msg)
 
     # ── Cooperative VRAM swap (pipeline + other chat) ──
+    # Evict the other role's local model; no-op when it's a cloud backend.
     other = meta["other"]
-    if st.session_state.get("last_model_role") == other:
+    other_ep = get_role_endpoint(config, other)
+    if st.session_state.get("last_model_role") == other and not is_cloud(other_ep["backend"]):
         with st.spinner(f"Unloading {ROLE_META[other]['label']} model…"):
-            unload_model(
-                config["base_url"],
-                config.get(f"{other}_model", ""),
-                config.get("backend", "lmstudio"),
-            )
+            unload_model(other_ep["base_url"], other_ep["model"], other_ep["backend"])
     st.session_state["last_model_role"] = role
-    # Tell the pipeline whether the prompter currently occupies VRAM
-    st.session_state["needs_swap"] = (role == "prompter")
+    # Tell the pipeline whether a *local* prompter currently occupies VRAM
+    st.session_state["needs_swap"] = (role == "prompter") and not is_cloud(endpoint["backend"])
 
     # Clicking any button interrupts the stream at its next placeholder
     # update; the partial is salvaged on the rerun (top of this function)
@@ -130,6 +129,7 @@ def render_chat(role: str, config: dict) -> None:
         full = ""
         error = ""
         chunk_count = 0
+        usage: dict = {}
         start = time.perf_counter()
 
         try:
@@ -138,13 +138,15 @@ def render_chat(role: str, config: dict) -> None:
                 + msgs
             )
             stream = stream_completion(
-                base_url=config["base_url"],
+                base_url=endpoint["base_url"],
                 model=model,
                 messages=api_messages,
                 temperature=config.get(meta["temp_key"], 0.3),
                 max_tokens=config.get(meta["tokens_key"], 2048),
-                backend=config.get("backend", "lmstudio"),
+                backend=endpoint["backend"],
                 timeout=meta["timeout"],
+                api_key=endpoint["api_key"],
+                usage_out=usage,
             )
             for token in stream:
                 chunk_count += 1
@@ -166,11 +168,19 @@ def render_chat(role: str, config: dict) -> None:
 
         if chunk_count and not error:
             elapsed = time.perf_counter() - start
+            stats = []
             if elapsed > 0:
-                st.caption(
+                stats.append(
                     f"~{chunk_count} tokens in {elapsed:.1f}s "
                     f"({chunk_count / elapsed:.1f} tok/s)"
                 )
+            if usage.get("input_tokens") is not None or usage.get("output_tokens") is not None:
+                stats.append(
+                    f"{usage.get('input_tokens', '?')} in / "
+                    f"{usage.get('output_tokens', '?')} out tokens"
+                )
+            if stats:
+                st.caption(" · ".join(stats))
 
     msgs.append({"role": "assistant", "content": full})
     st.session_state.pop(partial_key, None)

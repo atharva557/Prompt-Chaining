@@ -150,11 +150,17 @@ def render_landing(config: dict) -> str | None:
         unsafe_allow_html=True,
     )
 
-    prompter = config.get("prompter_model") or "not set"
-    coder = config.get("coder_model") or "not set"
+    from core.api import BACKEND_LABELS
+    from core.config import get_role_endpoint
+
+    def _role_summary(role: str) -> str:
+        ep = get_role_endpoint(config, role)
+        backend = BACKEND_LABELS.get(ep["backend"], ep["backend"])
+        return f"`{ep['model'] or 'not set'}` on {backend}"
+
     st.caption(
-        f"Prompter: `{prompter}` · Coder: `{coder}` — change in Settings "
-        "(sidebar)."
+        f"Prompter: {_role_summary('prompter')} · "
+        f"Coder: {_role_summary('coder')} — change in Settings (sidebar)."
     )
 
     return action
