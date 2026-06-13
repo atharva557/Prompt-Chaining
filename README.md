@@ -30,7 +30,7 @@ Running local LLMs on consumer hardware (8–16 GB VRAM) usually means you can o
 | 🕘 | **Run history** | Past runs persist across restarts; reopen or delete them from the sidebar |
 | ⚡ | **Side-by-side output** | Edit the prompt next to the generated code and regenerate in place |
 | 📋 | **25 built-in presets** | Across General, Web Dev, Data & Scripts, Games & Graphics, and Systems & CLI |
-| ✏️ | **Custom preset saving** | Save your own system prompts for either role |
+| ✏️ | **Presets manager** | Browse and edit every preset; edits to built-ins are saved as overrides (reset to default anytime), plus create/delete your own |
 | 🗂️ | **Smart file output** | Auto language detection, suggested filenames, timestamped saves, browser download |
 | 🌙 | **Minimal dark theme** | Clean, ChatGPT/Claude-inspired interface with a warm accent |
 
@@ -86,8 +86,8 @@ Running local LLMs on consumer hardware (8–16 GB VRAM) usually means you can o
 
 ```bash
 # Clone the repository
-git clone https://github.com/yourusername/promptchain.git
-cd promptchain
+git clone https://github.com/atharva557/Prompt-Chaining.git
+cd Prompt-Chaining
 
 # Install dependencies
 pip install -r requirements.txt

@@ -152,6 +152,18 @@ class TestSettingsPage(AppSmokeTestCase):
         self.assertIn("save_settings_btn", [b.key for b in at.button])
 
 
+class TestPresetsPage(AppSmokeTestCase):
+    def test_presets_page_renders_and_lists_presets(self):
+        at = self._run_app()
+        at.button(key="nav_presets_btn").click().run()
+        self.assertFalse(at.exception)
+        self.assertEqual(at.session_state["page"], "presets")
+        keys = [b.key for b in at.button]
+        self.assertIn("presets_back_btn", keys)
+        # The "New custom preset" create button exists for at least one role
+        self.assertIn("create_preset_prompter", keys)
+
+
 class TestPipelinePages(AppSmokeTestCase):
     """Render the review and output steps by seeding session state."""
 

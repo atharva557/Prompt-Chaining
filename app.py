@@ -26,6 +26,7 @@ from ui.prompt_review import render_prompt_review
 from ui.code_output import render_code_output
 from ui.landing import render_landing
 from ui.chat import render_chat
+from ui.presets import render_presets_manager
 
 # ═══════════════════════════════════════════════════════
 #  Page Config
@@ -179,6 +180,10 @@ with st.sidebar:
         st.session_state["page"] = "chat_coder"
         st.rerun()
 
+    if st.button("Presets", key="nav_presets_btn", use_container_width=True):
+        st.session_state["page"] = "presets"
+        st.rerun()
+
     render_divider()
 
     # ── History ──
@@ -263,6 +268,11 @@ if st.session_state["page"] == "landing":
     if landing_action:
         st.session_state["page"] = landing_action
         st.rerun()
+    st.stop()
+
+# --- Presets Manager (no models required) ---
+if st.session_state["page"] == "presets":
+    render_presets_manager(config)
     st.stop()
 
 # --- Check if config is valid (pipeline and chats need models) ---

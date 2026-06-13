@@ -150,5 +150,47 @@ class TestCustomPresets(ConfigTestCase):
         self.assertNotIn("Temp", cfg["custom_presets"])
 
 
+class TestPresetOverrides(ConfigTestCase):
+    def _first_builtin(self):
+        presets = config_mod.load_presets()
+        for role in ("prompter", "coder"):
+            for category, entries in presets[role].items():
+                for name, content in entries.items():
+                    return role, category, name, content
+        self.fail("no built-in presets found")
+
+    def test_save_override_applies_in_merged(self):
+        role, category, name, _ = self._first_builtin()
+        cfg = config_mod.get_default_config()
+        self.assertFalse(config_mod.is_preset_overridden(cfg, role, category, name))
+        cfg = config_mod.save_preset_override(cfg, role, category, name, "EDITED")
+        self.assertTrue(config_mod.is_preset_overridden(cfg, role, category, name))
+        merged = config_mod.get_merged_presets(cfg)
+        self.assertEqual(merged[role][category][name], "EDITED")
+
+    def test_reset_override_restores_default_and_cleans_up(self):
+        role, category, name, original = self._first_builtin()
+        cfg = config_mod.get_default_config()
+        cfg = config_mod.save_preset_override(cfg, role, category, name, "EDITED")
+        cfg = config_mod.reset_preset_override(cfg, role, category, name)
+        self.assertFalse(config_mod.is_preset_overridden(cfg, role, category, name))
+        self.assertEqual(cfg["preset_overrides"], {})  # empties pruned
+        merged = config_mod.get_merged_presets(cfg)
+        self.assertEqual(merged[role][category][name], original)
+
+    def test_stale_override_for_unknown_preset_is_ignored(self):
+        cfg = config_mod.get_default_config()
+        cfg = config_mod.save_preset_override(cfg, "prompter", "Nope", "Ghost", "x")
+        merged = config_mod.get_merged_presets(cfg)  # must not raise
+        self.assertNotIn("Nope", merged.get("prompter", {}))
+
+    def test_override_persists_through_save_load(self):
+        role, category, name, _ = self._first_builtin()
+        cfg = config_mod.get_default_config()
+        config_mod.save_preset_override(cfg, role, category, name, "PERSISTED")
+        merged = config_mod.get_merged_presets(config_mod.load_config())
+        self.assertEqual(merged[role][category][name], "PERSISTED")
+
+
 if __name__ == "__main__":
     unittest.main()

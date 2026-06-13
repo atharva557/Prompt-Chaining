@@ -30,6 +30,9 @@ def get_default_config() -> dict:
         "prompter_max_tokens": 1024,
         "coder_max_tokens": 4096,
         "custom_presets": {},
+        # Edits to built-in presets, keyed role -> category -> name -> text.
+        # Kept separate so the shipped presets.json is never mutated.
+        "preset_overrides": {},
     }
 
 
@@ -167,8 +170,17 @@ def get_merged_presets(config: dict) -> dict:
     }
     """
     presets = load_presets()
-    custom = config.get("custom_presets", {})
 
+    # Apply edits to built-in presets (only when the built-in still exists, so
+    # stale overrides for removed presets are silently ignored).
+    overrides = config.get("preset_overrides", {})
+    for role, categories in overrides.items():
+        for category, names in categories.items():
+            for name, content in names.items():
+                if name in presets.get(role, {}).get(category, {}):
+                    presets[role][category][name] = content
+
+    custom = config.get("custom_presets", {})
     for name, data in custom.items():
         role = data.get("role", "prompter")
         content = data.get("content", "")
@@ -178,6 +190,34 @@ def get_merged_presets(config: dict) -> dict:
             presets[role]["Custom"][name] = content
 
     return presets
+
+
+def is_preset_overridden(config: dict, role: str, category: str, name: str) -> bool:
+    """True when a built-in preset has a saved user edit."""
+    return name in config.get("preset_overrides", {}).get(role, {}).get(category, {})
+
+
+def save_preset_override(config: dict, role: str, category: str, name: str, content: str) -> dict:
+    """Save an edit to a built-in preset (does not touch presets.json)."""
+    overrides = config.setdefault("preset_overrides", {})
+    overrides.setdefault(role, {}).setdefault(category, {})[name] = content
+    save_config(config)
+    return config
+
+
+def reset_preset_override(config: dict, role: str, category: str, name: str) -> dict:
+    """Remove a built-in preset edit, restoring the shipped default."""
+    overrides = config.get("preset_overrides", {})
+    role_ov = overrides.get(role, {})
+    cat_ov = role_ov.get(category, {})
+    if name in cat_ov:
+        del cat_ov[name]
+        if not cat_ov:
+            del role_ov[category]
+        if not role_ov:
+            del overrides[role]
+        save_config(config)
+    return config
 
 
 def save_custom_preset(config: dict, name: str, role: str, content: str) -> dict:
