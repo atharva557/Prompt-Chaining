@@ -88,6 +88,10 @@ def _render_preset_selector(role: str, label: str, config: dict) -> None:
                 widget_key = f"{role}_system_input"
                 if widget_key in st.session_state:
                     del st.session_state[widget_key]
+                # Confirmation shown after the rerun (see app.py toast area)
+                st.session_state["_preset_loaded_toast"] = (
+                    f"Loaded “{selected_preset}” as the {label} prompt"
+                )
                 st.rerun()
 
 

@@ -173,6 +173,24 @@ class TestChatEmptyState(AppSmokeTestCase):
         self.assertEqual(len(example_keys), 3)
 
 
+class TestLoadPreset(AppSmokeTestCase):
+    def test_load_preset_sets_prompt_and_shows_toast(self):
+        at = self._run_app()
+        at.session_state["page"] = "pipeline"
+        at.run()
+        at.button(key="load_preset_prompter").click().run()
+        self.assertFalse(at.exception)
+        # The prompter system prompt now equals the selected built-in preset
+        merged = config_mod.get_merged_presets(config_mod.load_config())
+        cat = list(merged["prompter"])[0]
+        name = list(merged["prompter"][cat])[0]
+        self.assertEqual(
+            at.session_state["prompter_system"], merged["prompter"][cat][name]
+        )
+        # A confirmation toast was shown
+        self.assertTrue(any("Loaded" in t.value for t in at.toast))
+
+
 class TestPresetsPage(AppSmokeTestCase):
     def test_presets_page_renders_and_lists_presets(self):
         at = self._run_app()

@@ -264,6 +264,10 @@ if st.session_state.pop("_settings_saved_toast", False):
 if st.session_state.pop("_gen_stopped_toast", False):
     st.toast("Generation stopped")
 
+_preset_toast = st.session_state.pop("_preset_loaded_toast", None)
+if _preset_toast:
+    st.toast(_preset_toast, icon="✅")
+
 # --- Settings Page ---
 if st.session_state["show_settings"]:
     render_settings()
