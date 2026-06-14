@@ -1,36 +1,36 @@
 import streamlit as st
 
 def inject_custom_css():
-    """Inject the app theme CSS (teal accent on a slate-gray background)."""
+    """Inject the app theme CSS (muted-teal accent on a charcoal background)."""
     st.markdown("""
     <style>
     /* ═══════════════════════════════════════════════════════
-       PROMPTCHAIN — Teal + Slate Gray Theme
-       Teal accent (#2ec4b6) buttons, gray (#6c757d) background,
-       pill buttons, centered content column.
+       PROMPTCHAIN — Teal on Charcoal Theme
+       Muted-teal accent (#3c6e71) buttons, dark gray (#353535)
+       background, pill buttons, centered content column.
        ═══════════════════════════════════════════════════════ */
 
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Source+Serif+4:opsz,wght@8..60,400;8..60,600&family=JetBrains+Mono:wght@400;500&display=swap');
 
     /* ── Root Variables ── */
     :root {
-        --pc-bg: #6c757d;
-        --pc-bg-secondary: #353b41;   /* dark slate — sidebar + code blocks */
-        --pc-surface: #7b838a;        /* raised surfaces: cards, inputs, buttons */
-        --pc-surface-hover: #888f96;
-        --pc-border: #8b9298;
-        --pc-border-strong: #a6acb2;
-        --pc-text: #ffffff;
-        --pc-text-muted: #d3d7db;
-        --pc-accent: #2ec4b6;
-        --pc-accent-hover: #26a99d;
+        --pc-bg: #353535;
+        --pc-bg-secondary: #2a2a2a;   /* darker — sidebar + code blocks */
+        --pc-surface: #404040;        /* raised surfaces: cards, inputs, buttons */
+        --pc-surface-hover: #4a4a4a;
+        --pc-border: #4d4d4d;
+        --pc-border-strong: #666666;
+        --pc-text: #ececec;
+        --pc-text-muted: #a0a0a0;
+        --pc-accent: #3c6e71;
+        --pc-accent-hover: #4a8589;
         --pc-success: #4ade80;
         --pc-warning: #fbbf24;
         --pc-error: #f87171;
         /* Legacy aliases kept for components that reference them */
-        --pc-primary: #2ec4b6;
-        --pc-primary-light: #5fd4c9;
-        --pc-primary-glow: rgba(46, 196, 182, 0.25);
+        --pc-primary: #3c6e71;
+        --pc-primary-light: #4a8589;
+        --pc-primary-glow: rgba(60, 110, 113, 0.25);
     }
 
     /* ── Layout: centered content column ── */
@@ -97,8 +97,7 @@ def inject_custom_css():
     .stButton > button[kind="primary"] {
         background: var(--pc-accent) !important;
         border: 1px solid var(--pc-accent) !important;
-        color: #04332e !important;   /* dark teal — readable on the bright accent */
-        font-weight: 600 !important;
+        color: #ffffff !important;
     }
 
     .stButton > button[kind="primary"]:hover {
