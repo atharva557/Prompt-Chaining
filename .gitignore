@@ -12,6 +12,8 @@ venv/
 .claude/settings.local.json
 
 # Internal / working docs — kept locally, not published (README is the only public doc)
+AI_HANDOFF.md
+PROJECT_OVERVIEW.md
 HANDOVER.md
 MARKET_RESEARCH.md
 PROJECT_REVIEW.md
