@@ -7,6 +7,8 @@ pipeline, and the direct chats with the Prompter / Coder models.
 
 import streamlit as st
 
+from ui.styles import logo_html
+
 _LANDING_CSS = """
 <style>
 .pc-hero {
@@ -82,10 +84,10 @@ def render_landing(config: dict) -> str | None:
 
     st.markdown(
         '<div class="pc-hero">'
-        '<h1>⚡ PromptChain</h1>'
-        '<p class="tagline">Chain two local LLMs on one GPU: a small '
+        + logo_html("hero")
+        + '<p class="tagline">Chain two LLMs — local or cloud: a small '
         'Prompter that refines your idea, and a larger Coder that turns it '
-        'into working code — with automatic VRAM swapping in between.</p>'
+        'into working code, with a review step in between.</p>'
         '</div>',
         unsafe_allow_html=True,
     )

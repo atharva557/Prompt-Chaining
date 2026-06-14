@@ -19,6 +19,7 @@ from ui.styles import (
     render_connection_badge,
     render_model_info,
     render_divider,
+    logo_html,
 )
 from ui.settings import render_settings
 from ui.task_input import render_task_input, DEFAULT_PROMPTER_SYSTEM, DEFAULT_CODER_SYSTEM
@@ -34,7 +35,7 @@ from ui.presets import render_presets_manager
 
 st.set_page_config(
     page_title="PromptChain",
-    page_icon="⚡",
+    page_icon="🔗",
     layout="wide",
     initial_sidebar_state="expanded",
 )
@@ -161,7 +162,7 @@ def _check_connection(base_url: str, backend: str, api_key: str) -> bool:
     return ok
 
 with st.sidebar:
-    st.markdown("# PromptChain")
+    st.markdown(logo_html("sidebar"), unsafe_allow_html=True)
 
     if st.button("Home", key="nav_home_btn", use_container_width=True):
         st.session_state["page"] = "landing"

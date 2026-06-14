@@ -478,3 +478,26 @@ def render_model_info(label: str, model_name: str):
 def render_divider():
     """Render a styled divider."""
     st.markdown('<hr class="pc-divider">', unsafe_allow_html=True)
+
+
+def logo_html(variant: str = "sidebar") -> str:
+    """The PromptChain wordmark with a chain-link mark (inline SVG, themed via
+    var(--pc-accent)). variant: 'sidebar' (small, left) or 'hero' (large,
+    centered)."""
+    if variant == "hero":
+        svg_size, word_size, justify, margin = "2.6rem", "2.9rem", "center", "0 0 0.6rem"
+    else:
+        svg_size, word_size, justify, margin = "1.5rem", "1.4rem", "flex-start", "0.1rem 0 0.5rem"
+    return (
+        f'<div style="display:flex;align-items:center;justify-content:{justify};'
+        f'gap:0.6rem;margin:{margin};">'
+        f'<svg viewBox="0 0 24 24" fill="none" stroke-width="2.2" stroke-linecap="round" '
+        f'stroke-linejoin="round" aria-hidden="true" '
+        f'style="width:{svg_size};height:{svg_size};stroke:var(--pc-accent);flex-shrink:0;">'
+        f'<path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/>'
+        f'<path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>'
+        f'</svg>'
+        f'<span style="font-family:\'Source Serif 4\',Georgia,serif;font-weight:600;'
+        f'color:var(--pc-text);font-size:{word_size};letter-spacing:-0.01em;line-height:1;">'
+        f'PromptChain</span></div>'
+    )

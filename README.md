@@ -1,19 +1,21 @@
 <div align="center">
 
-# ⚡ PromptChain
+# 🔗 PromptChain
 
-**Chain two local LLMs together: a Prompter that refines your idea, and a Coder that writes the code.**
+**Chain two LLMs — local or cloud: a Prompter that refines your idea, and a Coder that writes the code.**
 
 ![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-3776AB?logo=python&logoColor=white)
 ![Streamlit](https://img.shields.io/badge/streamlit-1.35%2B-FF4B4B?logo=streamlit&logoColor=white)
 ![License MIT](https://img.shields.io/badge/license-MIT-green)
-![Local First](https://img.shields.io/badge/local--first-no_cloud_required-blueviolet)
+![Local-first, cloud optional](https://img.shields.io/badge/local--first-cloud_optional-blueviolet)
 
 </div>
 
 ---
 
 Running local LLMs on consumer hardware (8–16 GB VRAM) usually means you can only load one model at a time. PromptChain solves the tedious workflow of manually switching models and copy-pasting outputs between them. It chains a small **Prompter** model and a larger **Coder** model into a single, seamless pipeline — automatically swapping VRAM between models so you never have to.
+
+Each role has its own backend, so you can keep the Prompter local and point the Coder at a frontier cloud model (OpenAI, Claude, or Gemini) — frontier code quality on a budget GPU, paying only for the one generation that matters.
 
 <br>
 
@@ -28,11 +30,12 @@ Running local LLMs on consumer hardware (8–16 GB VRAM) usually means you can o
 | 💸 | **Local Prompter + cloud Coder** | Refine prompts for free on a local model, then send one clean prompt to a frontier cloud Coder — fewer wasted paid generations |
 | 🔍 | **Auto model detection** | Installed models are detected and listed automatically |
 | 🕘 | **Run history** | Past runs persist across restarts; reopen or delete them from the sidebar |
-| ⚡ | **Side-by-side output** | Edit the prompt next to the generated code and regenerate in place |
+| ♻️ | **Refine in place** | Send a follow-up instruction ("make the board bigger") to edit the code without regenerating from scratch |
+| 💬 | **Direct chats** | ChatGPT-style pages for just the Prompter or just the Coder when you don't need the full pipeline |
 | 📋 | **25 built-in presets** | Across General, Web Dev, Data & Scripts, Games & Graphics, and Systems & CLI |
 | ✏️ | **Presets manager** | Browse and edit every preset; edits to built-ins are saved as overrides (reset to default anytime), plus create/delete your own |
 | 🗂️ | **Smart file output** | Auto language detection, suggested filenames, timestamped saves, browser download |
-| 🌙 | **Minimal dark theme** | Clean, ChatGPT/Claude-inspired interface with a warm accent |
+| 🌙 | **Polished dark UI** | Clean Tokyo Night theme; tokens/sec for local runs and exact tokens + a cost estimate for cloud |
 
 <br>
 
@@ -198,5 +201,5 @@ This project is licensed under the [MIT License](LICENSE).
 ---
 
 <div align="center">
-<sub>Built for tinkerers who run LLMs at home. No cloud, no API keys, no telemetry.</sub>
+<sub>Built for tinkerers who run LLMs at home — local-first, with cloud models when you want them. No telemetry.</sub>
 </div>
