@@ -20,8 +20,8 @@ def inject_custom_css():
         --pc-surface-hover: #2f3549;
         --pc-border: #343a52;
         --pc-border-strong: #545c7e;
-        --pc-text: #c0caf5;
-        --pc-text-muted: #828bb8;
+        --pc-text: #dde3f7;
+        --pc-text-muted: #9aa3cc;
         --pc-accent: #7aa2f7;
         --pc-accent-hover: #6b8de0;
         --pc-success: #9ece6a;
