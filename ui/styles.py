@@ -1,36 +1,36 @@
 import streamlit as st
 
 def inject_custom_css():
-    """Inject the app theme CSS (muted-teal accent on a charcoal background)."""
+    """Inject the app theme CSS (Tokyo Night — blue accent on deep blue-black)."""
     st.markdown("""
     <style>
     /* ═══════════════════════════════════════════════════════
-       PROMPTCHAIN — Teal on Charcoal Theme
-       Muted-teal accent (#3c6e71) buttons, dark gray (#353535)
-       background, pill buttons, centered content column.
+       PROMPTCHAIN — Tokyo Night Theme
+       Deep blue-black background (#1a1b26), blue accent (#7aa2f7),
+       pill buttons, centered content column.
        ═══════════════════════════════════════════════════════ */
 
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Source+Serif+4:opsz,wght@8..60,400;8..60,600&family=JetBrains+Mono:wght@400;500&display=swap');
 
     /* ── Root Variables ── */
     :root {
-        --pc-bg: #353535;
-        --pc-bg-secondary: #2a2a2a;   /* darker — sidebar + code blocks */
-        --pc-surface: #404040;        /* raised surfaces: cards, inputs, buttons */
-        --pc-surface-hover: #4a4a4a;
-        --pc-border: #4d4d4d;
-        --pc-border-strong: #666666;
-        --pc-text: #ececec;
-        --pc-text-muted: #a0a0a0;
-        --pc-accent: #3c6e71;
-        --pc-accent-hover: #4a8589;
-        --pc-success: #4ade80;
-        --pc-warning: #fbbf24;
-        --pc-error: #f87171;
+        --pc-bg: #1a1b26;
+        --pc-bg-secondary: #16161e;   /* darker — sidebar + code blocks */
+        --pc-surface: #24283b;        /* raised surfaces: cards, inputs, buttons */
+        --pc-surface-hover: #2f3549;
+        --pc-border: #343a52;
+        --pc-border-strong: #545c7e;
+        --pc-text: #c0caf5;
+        --pc-text-muted: #828bb8;
+        --pc-accent: #7aa2f7;
+        --pc-accent-hover: #6b8de0;
+        --pc-success: #9ece6a;
+        --pc-warning: #e0af68;
+        --pc-error: #f7768e;
         /* Legacy aliases kept for components that reference them */
-        --pc-primary: #3c6e71;
-        --pc-primary-light: #4a8589;
-        --pc-primary-glow: rgba(60, 110, 113, 0.25);
+        --pc-primary: #7aa2f7;
+        --pc-primary-light: #89b4fa;
+        --pc-primary-glow: rgba(122, 162, 247, 0.25);
     }
 
     /* ── Layout: centered content column ── */
@@ -97,7 +97,8 @@ def inject_custom_css():
     .stButton > button[kind="primary"] {
         background: var(--pc-accent) !important;
         border: 1px solid var(--pc-accent) !important;
-        color: #ffffff !important;
+        color: #1a1b26 !important;   /* dark — readable on the light-blue accent */
+        font-weight: 600 !important;
     }
 
     .stButton > button[kind="primary"]:hover {
