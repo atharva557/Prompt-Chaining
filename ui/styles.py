@@ -1,12 +1,12 @@
 import streamlit as st
 
 def inject_custom_css():
-    """Inject the minimal dark theme CSS (ChatGPT / Claude inspired)."""
+    """Inject the app theme CSS (teal accent on a slate-gray background)."""
     st.markdown("""
     <style>
     /* ═══════════════════════════════════════════════════════
-       PROMPTCHAIN — Minimal Dark Theme
-       Warm neutral palette, serif display headings,
+       PROMPTCHAIN — Teal + Slate Gray Theme
+       Teal accent (#2ec4b6) buttons, gray (#6c757d) background,
        pill buttons, centered content column.
        ═══════════════════════════════════════════════════════ */
 
@@ -14,23 +14,23 @@ def inject_custom_css():
 
     /* ── Root Variables ── */
     :root {
-        --pc-bg: #262624;
-        --pc-bg-secondary: #1f1e1d;
-        --pc-surface: #30302e;
-        --pc-surface-hover: #3a3a37;
-        --pc-border: #3d3d3a;
-        --pc-border-strong: #52524d;
-        --pc-text: #eceae4;
-        --pc-text-muted: #a3a094;
-        --pc-accent: #d97757;
-        --pc-accent-hover: #c4633f;
+        --pc-bg: #6c757d;
+        --pc-bg-secondary: #353b41;   /* dark slate — sidebar + code blocks */
+        --pc-surface: #7b838a;        /* raised surfaces: cards, inputs, buttons */
+        --pc-surface-hover: #888f96;
+        --pc-border: #8b9298;
+        --pc-border-strong: #a6acb2;
+        --pc-text: #ffffff;
+        --pc-text-muted: #d3d7db;
+        --pc-accent: #2ec4b6;
+        --pc-accent-hover: #26a99d;
         --pc-success: #4ade80;
         --pc-warning: #fbbf24;
         --pc-error: #f87171;
         /* Legacy aliases kept for components that reference them */
-        --pc-primary: #d97757;
-        --pc-primary-light: #e89b7d;
-        --pc-primary-glow: rgba(217, 119, 87, 0.25);
+        --pc-primary: #2ec4b6;
+        --pc-primary-light: #5fd4c9;
+        --pc-primary-glow: rgba(46, 196, 182, 0.25);
     }
 
     /* ── Layout: centered content column ── */
@@ -97,7 +97,8 @@ def inject_custom_css():
     .stButton > button[kind="primary"] {
         background: var(--pc-accent) !important;
         border: 1px solid var(--pc-accent) !important;
-        color: #ffffff !important;
+        color: #04332e !important;   /* dark teal — readable on the bright accent */
+        font-weight: 600 !important;
     }
 
     .stButton > button[kind="primary"]:hover {
