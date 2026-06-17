@@ -124,6 +124,11 @@ def render_code_output():
     extension = detect_language(task, code, fence_lang)
     lang_display = LANGUAGE_DISPLAY.get(extension, "text")
 
+    # ── Original idea (read-only) — the task typed in step 1, shown above the
+    # refined prompt for reference (mirrors the prompt-review step) ──
+    with st.expander("Original task", expanded=False):
+        st.markdown(f"```\n{task}\n```")
+
     # ── Prompt (editable) — secondary on the output page, so it's tucked into
     # an expander to give the code the full content width ──
     with st.expander("📝 Prompt sent to the Coder — edit & regenerate", expanded=False):
