@@ -1,0 +1,15 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "promptchain",
+      "runtimeExecutable": ".venv/Scripts/python.exe",
+      "runtimeArgs": [
+        "-m", "streamlit", "run", "app.py",
+        "--server.port", "8590",
+        "--server.headless", "true"
+      ],
+      "port": 8590
+    }
+  ]
+}

@@ -232,9 +232,9 @@ def inject_custom_css():
     }
 
     .step-item.active {
-        background: rgba(217, 119, 87, 0.12);
+        background: var(--pc-primary-glow);
         color: var(--pc-accent);
-        border: 1px solid rgba(217, 119, 87, 0.35);
+        border: 1px solid rgba(122, 162, 247, 0.45);
     }
 
     .step-item.completed {
@@ -273,7 +273,7 @@ def inject_custom_css():
     .step-item.active .step-number {
         background: var(--pc-accent);
         border-color: var(--pc-accent);
-        color: #ffffff;
+        color: #1a1b26;   /* dark on the light-blue accent, like primary buttons */
     }
 
     /* ── Status Messages ── */
@@ -343,6 +343,61 @@ def inject_custom_css():
         border-top-color: var(--pc-accent);
         border-radius: 50%;
         animation: spin 0.8s linear infinite;
+    }
+
+    /* ── Sidebar section headings ── */
+    .pc-sidebar-heading {
+        font-size: 0.7rem;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        color: var(--pc-text-muted);
+        margin: 0.2rem 0 0.45rem 0;
+    }
+
+    /* ── Sidebar history list ── */
+    /* Open buttons: quiet, left-aligned rows that light up on hover */
+    section[data-testid="stSidebar"] [class*="st-key-hist_"] button {
+        justify-content: flex-start !important;
+        text-align: left !important;
+        background: transparent !important;
+        border-color: transparent !important;
+        border-radius: 10px !important;
+        padding: 0.3rem 0.7rem !important;
+    }
+    section[data-testid="stSidebar"] [class*="st-key-hist_"] button:hover {
+        background: var(--pc-surface) !important;
+        border-color: var(--pc-border) !important;
+    }
+    /* The button's inner flex wrapper centers its content by default */
+    section[data-testid="stSidebar"] [class*="st-key-hist_"] button > div {
+        justify-content: flex-start !important;
+    }
+    section[data-testid="stSidebar"] [class*="st-key-hist_"] button p {
+        font-size: 0.8rem !important;
+        text-align: left !important;
+        width: 100%;
+    }
+    /* Delete buttons: ghost ✕ that turns red on hover */
+    section[data-testid="stSidebar"] [class*="st-key-histdel_"] button {
+        background: transparent !important;
+        border-color: transparent !important;
+        color: var(--pc-text-muted) !important;
+        padding: 0.3rem 0.45rem !important;
+    }
+    section[data-testid="stSidebar"] [class*="st-key-histdel_"] button:hover {
+        color: var(--pc-error) !important;
+        background: rgba(247, 118, 142, 0.12) !important;
+        border-color: transparent !important;
+    }
+
+    /* ── Chat messages: raised cards instead of bare text ── */
+    [data-testid="stChatMessage"] {
+        background: var(--pc-surface);
+        border: 1px solid var(--pc-border);
+        border-radius: 14px;
+        padding: 0.85rem 1rem;
+        margin-bottom: 0.4rem;
     }
 
     /* ── Model Info Card ── */
@@ -478,6 +533,13 @@ def render_model_info(label: str, model_name: str):
 def render_divider():
     """Render a styled divider."""
     st.markdown('<hr class="pc-divider">', unsafe_allow_html=True)
+
+
+def render_sidebar_heading(text: str):
+    """Small uppercase section label for the sidebar (History, Endpoints…)."""
+    st.markdown(
+        f'<div class="pc-sidebar-heading">{text}</div>', unsafe_allow_html=True
+    )
 
 
 def logo_html(variant: str = "sidebar") -> str:

@@ -35,6 +35,7 @@ def _ensure_widget_defaults(config: dict):
         "settings_coder_temp": config.get("coder_temperature", 0.1),
         "settings_prompter_tokens": config.get("prompter_max_tokens", 1024),
         "settings_coder_tokens": config.get("coder_max_tokens", 4096),
+        "settings_idle_unload_minutes": config.get("idle_unload_minutes", 5),
         "settings_output_folder": config.get("output_folder", "./output"),
     }
     for key, value in defaults.items():
@@ -277,8 +278,8 @@ def render_settings():
     config = st.session_state.get("config", load_config())
     _ensure_widget_defaults(config)
 
-    tab_prompter, tab_coder, tab_keys, tab_output = st.tabs(
-        ["Prompter", "Coder", "API keys", "Output"]
+    tab_prompter, tab_coder, tab_keys, tab_general = st.tabs(
+        ["Prompter", "Coder", "API keys", "General"]
     )
     with tab_prompter:
         prompter = _render_role_endpoint("prompter", "Prompter", config)
@@ -286,11 +287,23 @@ def render_settings():
         coder = _render_role_endpoint("coder", "Coder", config)
     with tab_keys:
         _render_api_keys_tab(config)
-    with tab_output:
+    with tab_general:
         output_folder = st.text_input(
             "Output folder",
             key="settings_output_folder",
             help="Where generated code files will be saved",
+        )
+        st.number_input(
+            "Auto-unload idle local models (minutes, 0 = never)",
+            min_value=0,
+            max_value=120,
+            step=1,
+            key="settings_idle_unload_minutes",
+            help=(
+                "Free local VRAM when the resident model (Prompter or Coder) "
+                "has sat idle this long. Any interaction resets the timer; "
+                "cloud backends are unaffected."
+            ),
         )
 
     # Same local model for both roles defeats the VRAM swap
@@ -329,6 +342,7 @@ def render_settings():
             "coder_temperature": st.session_state["settings_coder_temp"],
             "prompter_max_tokens": st.session_state["settings_prompter_tokens"],
             "coder_max_tokens": st.session_state["settings_coder_tokens"],
+            "idle_unload_minutes": st.session_state["settings_idle_unload_minutes"],
             "custom_presets": config.get("custom_presets", {}),
             "preset_overrides": config.get("preset_overrides", {}),
         }

@@ -1,2 +1,5 @@
 -r requirements.txt
 pytest>=8.0.0
+# Used directly by tests/test_streaming.py to build real Anthropic SDK error
+# objects (already a transitive dependency of the anthropic package).
+httpx>=0.27.0

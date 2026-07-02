@@ -11,7 +11,7 @@ import time
 
 import streamlit as st
 
-from core.api import unload_model, is_cloud, estimate_cost, BACKEND_LABELS
+from core.api import unload_model, is_cloud, estimate_cost, BACKEND_LABELS, cancel_unload
 from core.config import get_role_endpoint
 from core.streaming import stream_completion, PROMPTER_TIMEOUT, CODER_TIMEOUT
 
@@ -144,6 +144,8 @@ def render_chat(role: str, config: dict) -> None:
         with st.spinner(f"Unloading {ROLE_META[other]['label']} model…"):
             unload_model(other_ep["base_url"], other_ep["model"], other_ep["backend"])
     st.session_state["last_model_role"] = role
+    # A reply is about to stream — cancel any pending idle-unload of this model.
+    cancel_unload()
     # Tell the pipeline whether a *local* prompter currently occupies VRAM
     st.session_state["needs_swap"] = (role == "prompter") and not is_cloud(endpoint["backend"])
 
