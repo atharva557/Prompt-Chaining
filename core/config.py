@@ -29,6 +29,9 @@ def get_default_config() -> dict:
         "coder_temperature": 0.1,
         "prompter_max_tokens": 1024,
         "coder_max_tokens": 4096,
+        # Free a resident local model's VRAM after this many idle minutes;
+        # 0 = never. Applies to whichever role (prompter or coder) served last.
+        "idle_unload_minutes": 5,
         "custom_presets": {},
         # Edits to built-in presets, keyed role -> category -> name -> text.
         # Kept separate so the shipped presets.json is never mutated.
@@ -50,6 +53,9 @@ def _migrate_config(saved: dict) -> dict:
         saved["coder_base_url"] = legacy_url
     if "api_keys" not in saved:
         saved["api_keys"] = {"openai": "", "anthropic": "", "gemini": ""}
+    # The idle-unload setting was briefly coder-only before covering both roles
+    if "idle_unload_minutes" not in saved and "coder_idle_unload_minutes" in saved:
+        saved["idle_unload_minutes"] = saved["coder_idle_unload_minutes"]
     return saved
 
 

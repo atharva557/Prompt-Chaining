@@ -1,5 +1,6 @@
 import requests
 import json
+import threading
 from typing import Optional
 
 DEFAULT_TIMEOUT = 15  # seconds for non-generation requests
@@ -311,3 +312,71 @@ def unload_model(base_url: str, model_id: str, backend: str = "lmstudio") -> boo
         return True
     except Exception:
         return False  # Best-effort, don't crash
+
+
+# ── Idle / deferred model unload ────────────────────────────────────────────
+# A single process-wide background timer that frees a local model's VRAM after
+# an idle period. Lives at module scope so it survives Streamlit reruns, and its
+# callback only calls unload_model (pure HTTP) — it never touches Streamlit
+# state, so running on a bare timer thread is safe. Instead, the callback
+# records that it fired and app.py polls consume_unload_fired() at the top of
+# every rerun to drop its stale "model is resident" session state (otherwise it
+# would keep re-arming the timer against an already-evicted model).
+_unload_timer: "threading.Timer | None" = None
+_unload_fired = False
+_unload_lock = threading.Lock()
+
+
+def _fire_unload(base_url: str, model_id: str, backend: str) -> None:
+    """Timer callback: unload the model, then record that the eviction
+    happened so the next script run can sync its session state."""
+    global _unload_timer, _unload_fired
+    unload_model(base_url, model_id, backend)
+    with _unload_lock:
+        _unload_fired = True
+        _unload_timer = None
+
+
+def consume_unload_fired() -> bool:
+    """True exactly once after a scheduled unload has actually run."""
+    global _unload_fired
+    with _unload_lock:
+        fired = _unload_fired
+        _unload_fired = False
+        return fired
+
+
+def cancel_unload() -> None:
+    """Cancel any pending scheduled unload (e.g. a generation is starting)."""
+    global _unload_timer
+    with _unload_lock:
+        if _unload_timer is not None:
+            _unload_timer.cancel()
+            _unload_timer = None
+
+
+def schedule_unload(
+    base_url: str, model_id: str, backend: str = "lmstudio", delay_seconds: float = 300
+) -> bool:
+    """
+    Arm a background timer to unload a local model after `delay_seconds`.
+
+    Re-arming cancels the previous timer, so calling this on every interaction
+    acts as "reset the idle clock". No-op (and cancels) for cloud/custom backends
+    or `delay_seconds <= 0` (the latter is how the user disables auto-unload).
+    Returns True only when a timer was actually armed.
+    """
+    global _unload_timer
+    with _unload_lock:
+        if _unload_timer is not None:
+            _unload_timer.cancel()
+            _unload_timer = None
+        if not delay_seconds or delay_seconds <= 0 or backend == "custom" or is_cloud(backend):
+            return False
+        timer = threading.Timer(
+            delay_seconds, _fire_unload, args=(base_url, model_id, backend)
+        )
+        timer.daemon = True
+        timer.start()
+        _unload_timer = timer
+        return True

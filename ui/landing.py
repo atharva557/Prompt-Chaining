@@ -35,8 +35,17 @@ _LANDING_CSS = """
     border: 1px solid var(--pc-border);
     border-radius: 14px;
     padding: 1.3rem 1.15rem;
-    min-height: 10.5rem;
+    /* Tall enough for the longest description at desktop widths, so the
+       buttons under the four cards line up */
+    min-height: 12.5rem;
     margin-bottom: 0.8rem;
+    transition: border-color 0.15s ease, transform 0.15s ease,
+                box-shadow 0.15s ease;
+}
+.pc-mode-card:hover {
+    border-color: var(--pc-accent);
+    transform: translateY(-2px);
+    box-shadow: 0 8px 26px rgba(0, 0, 0, 0.3);
 }
 .pc-mode-card .icon { font-size: 1.5rem; }
 .pc-mode-card h4 {
@@ -122,7 +131,7 @@ def render_landing(config: dict) -> str | None:
             unsafe_allow_html=True,
         )
         if st.button(
-            "Open Prompter chat",
+            "Open chat",
             key="landing_chat_prompter_btn",
             use_container_width=True,
         ):
@@ -138,7 +147,7 @@ def render_landing(config: dict) -> str | None:
             unsafe_allow_html=True,
         )
         if st.button(
-            "Open Coder chat",
+            "Open chat",
             key="landing_chat_coder_btn",
             use_container_width=True,
         ):

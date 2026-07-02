@@ -149,9 +149,21 @@ def _stream_openai_compatible(
 
 
 def _anthropic_omits_temperature(model: str) -> bool:
-    """Opus 4.7+, 4.8, and Fable models reject sampling params (400)."""
+    """Known models that reject sampling params (`temperature`/`top_p`/`top_k`)
+    with a 400: Opus 4.7/4.8 and the Fable family. This is only a *fast path*
+    that skips a wasted first request for current models — `_stream_anthropic`
+    also retries without sampling params on any 400 that complains about them,
+    so a future model not listed here still works (it just pays one rejected
+    request). Keep the list accurate, but correctness no longer depends on it."""
     m = model.lower()
     return m.startswith(("claude-opus-4-7", "claude-opus-4-8", "claude-fable"))
+
+
+def _is_sampling_param_error(err) -> bool:
+    """True when a 400 looks like the API rejecting a sampling parameter, so the
+    request can be retried without it."""
+    msg = (getattr(err, "message", "") or str(err)).lower()
+    return any(p in msg for p in ("temperature", "top_p", "top_k", "sampling"))
 
 
 def _stream_anthropic(
@@ -179,18 +191,37 @@ def _stream_anthropic(
     }
     if system:
         kwargs["system"] = system
+    # Fast path: skip temperature for models known to reject sampling params.
     if not _anthropic_omits_temperature(model):
         kwargs["temperature"] = temperature
 
-    try:
-        client = anthropic.Anthropic(api_key=api_key, timeout=timeout)
-        with client.messages.stream(**kwargs) as stream:
+    client = anthropic.Anthropic(api_key=api_key, timeout=timeout)
+
+    def _attempt(call_kwargs):
+        with client.messages.stream(**call_kwargs) as stream:
             for text in stream.text_stream:
                 yield text
             if usage_out is not None:
                 usage = stream.get_final_message().usage
                 usage_out["input_tokens"] = usage.input_tokens
                 usage_out["output_tokens"] = usage.output_tokens
+
+    try:
+        # Forward-compat net: a model not in the fast-path list above may still
+        # reject `temperature` with a 400. If that happens before any token has
+        # streamed, drop the param and retry once. BadRequestError is a subclass
+        # of APIStatusError, so it must be handled before the generic mapping.
+        emitted = False
+        try:
+            for text in _attempt(kwargs):
+                emitted = True
+                yield text
+        except anthropic.BadRequestError as e:
+            if not emitted and "temperature" in kwargs and _is_sampling_param_error(e):
+                kwargs.pop("temperature", None)
+                yield from _attempt(kwargs)
+            else:
+                raise
     except anthropic.APITimeoutError:
         raise TimeoutError(
             "Generation timed out. The model may be overloaded or the prompt too long."

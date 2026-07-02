@@ -5,12 +5,22 @@ Chains two LLMs together: a Prompter that refines your idea into
 a detailed prompt, and a Coder that turns that prompt into working code.
 """
 
+import html
 import time
 
 import streamlit as st
 
 from core.config import config_exists, load_config, get_role_endpoint
-from core.api import test_connection, unload_model, is_cloud, estimate_cost, BACKEND_LABELS
+from core.api import (
+    test_connection,
+    unload_model,
+    is_cloud,
+    estimate_cost,
+    BACKEND_LABELS,
+    schedule_unload,
+    cancel_unload,
+    consume_unload_fired,
+)
 from core.history import load_history, add_entry, delete_entry, clear_history
 from core.streaming import stream_completion, PROMPTER_TIMEOUT, CODER_TIMEOUT
 from ui.styles import (
@@ -19,6 +29,7 @@ from ui.styles import (
     render_connection_badge,
     render_model_info,
     render_divider,
+    render_sidebar_heading,
     logo_html,
 )
 from ui.settings import render_settings
@@ -148,6 +159,28 @@ if not config_exists() and not st.session_state.get("_first_run_handled"):
     st.session_state["_settings_just_opened"] = True
     st.session_state["_first_run_handled"] = True
 
+# ── Idle auto-unload of the resident local model ──
+# The background timer (core/api.py) can't touch session state, so sync first:
+# if it fired since the last rerun, the resident model is already evicted.
+if consume_unload_fired():
+    st.session_state["last_model_role"] = None
+
+# While a local model (either role) is resident, (re)arm a background timer
+# that frees its VRAM after the configured idle period (0 = never). Every
+# interaction reruns the script and resets the clock; any generation cancels
+# the timer (run_streaming_generation / chat), so it never fires mid-stream.
+_resident_role = st.session_state.get("last_model_role")
+_resident_ep = get_role_endpoint(config, _resident_role) if _resident_role else None
+if _resident_ep and not is_cloud(_resident_ep["backend"]):
+    schedule_unload(
+        _resident_ep["base_url"],
+        _resident_ep["model"],
+        _resident_ep["backend"],
+        delay_seconds=(config.get("idle_unload_minutes", 5) or 0) * 60,
+    )
+else:
+    cancel_unload()
+
 # ═══════════════════════════════════════════════════════
 #  Sidebar
 # ═══════════════════════════════════════════════════════
@@ -165,6 +198,14 @@ with st.sidebar:
     st.markdown(logo_html("sidebar"), unsafe_allow_html=True)
 
     if st.button("Home", key="nav_home_btn", use_container_width=True):
+        # Going Home means stepping away — free the resident local model's VRAM
+        resident = st.session_state.get("last_model_role")
+        if resident:
+            ep = get_role_endpoint(config, resident)
+            if not is_cloud(ep["backend"]):
+                cancel_unload()
+                unload_model(ep["base_url"], ep["model"], ep["backend"])
+                st.session_state["last_model_role"] = None
         st.session_state["page"] = "landing"
         st.rerun()
 
@@ -188,7 +229,7 @@ with st.sidebar:
     render_divider()
 
     # ── History ──
-    st.markdown("**History**")
+    render_sidebar_heading("History")
     history = load_history()
     if not history:
         st.caption("No previous runs yet.")
@@ -224,7 +265,7 @@ with st.sidebar:
     render_divider()
 
     # Per-role endpoint: backend label, model, and a connection badge each
-    st.markdown("**Endpoints**")
+    render_sidebar_heading("Endpoints")
     for role, role_label in (("prompter", "Prompter"), ("coder", "Coder")):
         ep = get_role_endpoint(config, role)
         backend_label = BACKEND_LABELS.get(ep["backend"], ep["backend"])
@@ -347,6 +388,8 @@ def run_streaming_generation(
         tuple: (full_output: str, error: str). error is empty on success.
     """
     endpoint = get_role_endpoint(config, role)
+    # A generation is starting — don't let an idle-unload timer fire mid-stream.
+    cancel_unload()
     full_output = ""
     first_token = True
     chunk_count = 0
@@ -446,20 +489,22 @@ def render_pipeline_checklist(stages: list[dict]):
         "error": "var(--pc-error)",
     }
 
-    html = '<div style="margin: 1rem 0;">'
+    markup = '<div style="margin: 1rem 0;">'
     for stage in stages:
         state = stage["state"]
         icon = icons.get(state, "○")
         color = colors.get(state, "var(--pc-text-muted)")
         font_weight = "600" if state == "running" else "400"
-        html += (
+        # Labels can carry raw server error text — escape so markup in an
+        # error message can't break (or script) the page.
+        markup += (
             f'<div style="display:flex; align-items:center; gap:0.6rem; '
             f'padding:0.4rem 0; color:{color}; font-weight:{font_weight}; '
             f'font-family:Inter,sans-serif; font-size:0.9rem;">'
-            f'{icon} {stage["label"]}</div>'
+            f'{icon} {html.escape(stage["label"])}</div>'
         )
-    html += '</div>'
-    st.markdown(html, unsafe_allow_html=True)
+    markup += '</div>'
+    st.markdown(markup, unsafe_allow_html=True)
 
 
 def _role_is_local(role: str) -> bool:
@@ -778,6 +823,7 @@ elif st.session_state["current_step"] == STEP_CODE_OUTPUT:
     elif action == "start_over":
         # Unload a local coder model to free VRAM, then reset for a fresh task
         coder = get_role_endpoint(config, "coder")
+        cancel_unload()
         unload_model(coder["base_url"], coder["model"], coder["backend"])
         st.session_state["last_model_role"] = None
         reset_pipeline()

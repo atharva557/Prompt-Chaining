@@ -9,5 +9,5 @@ dist/
 build/
 .venv/
 venv/
-.claude/settings.local.json
+.claude/
 
