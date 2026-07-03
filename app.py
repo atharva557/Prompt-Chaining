@@ -93,6 +93,9 @@ def init_session_state():
         # the previous code + an instruction so the coder edits in place
         "coder_mode": "full",
         "refine_instruction": "",
+        # Same idea for the review step: an instruction that sends the current
+        # prompt back to the Prompter for an in-place revision
+        "prompt_refine_instruction": "",
         # True after the prompter has run, so the coder step knows a
         # VRAM swap is actually needed (regenerating from the output
         # page skips the pointless unload).
@@ -120,12 +123,14 @@ def reset_pipeline():
     st.session_state["coder_partial"] = ""
     st.session_state["coder_mode"] = "full"
     st.session_state["refine_instruction"] = ""
+    st.session_state["prompt_refine_instruction"] = ""
     st.session_state["needs_swap"] = False
     st.session_state["show_settings"] = False
     # Drop widget state so inputs re-initialize cleanly
     for key in (
         "task_input_area",
         "prompt_review_area",
+        "prompt_refine_area",
         "output_prompt_area",
         "output_filename",
         "output_folder_display",
@@ -522,8 +527,11 @@ def _stop_prompter():
     st.session_state["needs_swap"] = _role_is_local("prompter")
 
 
-def run_prompter(status_placeholder) -> tuple[str, str]:
-    """Stream the prompter model. Returns (result, error)."""
+def run_prompter(status_placeholder, messages: list[dict] | None = None) -> tuple[str, str]:
+    """Stream the prompter model. Returns (result, error).
+
+    `messages` switches to a multi-turn call (prompt revision at the review
+    step) instead of the default single-turn task rewrite."""
 
     # A local coder model left loaded by a chat or earlier run would fight the
     # prompter for VRAM — evict it first. (No-op for a cloud coder.)
@@ -557,6 +565,7 @@ def run_prompter(status_placeholder) -> tuple[str, str]:
         display_mode="text",
         timeout=PROMPTER_TIMEOUT,
         on_first_token=lambda: show_status(loaded=True),
+        messages=messages,
     )
 
 
@@ -594,9 +603,18 @@ if st.session_state["current_step"] == STEP_TASK_INPUT:
             # A local prompter now occupies VRAM and must be swapped out
             # before the coder runs; a cloud prompter occupies nothing.
             st.session_state["needs_swap"] = _role_is_local("prompter")
-            st.session_state["current_step"] = STEP_PROMPT_REVIEW
             # Drop stale widget state so the review text area shows the new prompt
             st.session_state.pop("prompt_review_area", None)
+            if st.session_state.get("quick_mode"):
+                # Quick mode: hand the prompt straight to the coder. The review
+                # step stays reachable via "Back to prompt" and the output page.
+                st.session_state["current_step"] = STEP_GENERATING
+                st.session_state["coder_pending"] = True
+                st.session_state["coder_mode"] = "full"
+                st.session_state["coder_error"] = ""
+                st.session_state["coder_partial"] = ""
+            else:
+                st.session_state["current_step"] = STEP_PROMPT_REVIEW
             st.rerun()
 
 # ═══════════════════════════════════════════════════════
@@ -607,13 +625,37 @@ elif st.session_state["current_step"] == STEP_PROMPT_REVIEW:
     action = render_prompt_review()
     if st.session_state.pop("review_retry", False):
         action = "retry"
+    if st.session_state.pop("review_refine", False):
+        action = "refine"
 
-    if action == "retry":
+    if action in ("retry", "refine"):
+        refine_mode = action == "refine"
         st.session_state["is_running"] = True
         status_placeholder = st.empty()
         st.button("Stop", key="stop_prompter_retry_btn", on_click=_stop_prompter)
 
-        result, error = run_prompter(status_placeholder)
+        # Refine: multi-turn call with the current prompt + the instruction so
+        # the Prompter revises in place; retry regenerates from the task.
+        prompter_messages = None
+        if refine_mode:
+            prompter_messages = [
+                {"role": "system", "content": st.session_state["prompter_system"]},
+                {"role": "user", "content": st.session_state["task_description"]},
+                {"role": "assistant", "content": st.session_state["generated_prompt"]},
+                {
+                    "role": "user",
+                    "content": (
+                        "Revise the prompt above according to the following "
+                        "instructions. Apply only the requested changes and "
+                        "keep everything else intact. Output ONLY the complete "
+                        "revised prompt in markdown — no preamble, no "
+                        "commentary, no code.\n\n"
+                        + st.session_state.get("prompt_refine_instruction", "")
+                    ),
+                },
+            ]
+
+        result, error = run_prompter(status_placeholder, messages=prompter_messages)
         st.session_state["is_running"] = False
 
         if error:
@@ -621,14 +663,19 @@ elif st.session_state["current_step"] == STEP_PROMPT_REVIEW:
                 render_pipeline_checklist([
                     {"label": f"Regeneration failed: {error}", "state": "error"},
                 ])
+            # Re-trigger the same action (refine keeps its instruction)
+            retry_flag = "review_refine" if refine_mode else "review_retry"
             st.button(
                 "Retry again",
                 key="retry_prompt_again",
-                on_click=lambda: st.session_state.update(review_retry=True),
+                on_click=lambda flag=retry_flag: st.session_state.update({flag: True}),
             )
         else:
             st.session_state["generated_prompt"] = result
             st.session_state["needs_swap"] = _role_is_local("prompter")
+            if refine_mode:
+                st.session_state["prompt_refine_instruction"] = ""
+                st.session_state.pop("prompt_refine_area", None)
             # Drop stale widget state so the text area picks up the new prompt
             st.session_state.pop("prompt_review_area", None)
             st.rerun()

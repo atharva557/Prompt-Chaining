@@ -1,7 +1,9 @@
 import streamlit as st
 from core.config import get_merged_presets, save_custom_preset
+from core.suggest import suggest_presets
 
-# Default system prompts (fallbacks if presets fail to load)
+# Default system prompts (fallbacks if presets fail to load). Kept in sync
+# with "Standard Prompt Engineer" / "Clean Code" in presets/presets.json.
 DEFAULT_PROMPTER_SYSTEM = """You are an expert prompt engineer specializing in prompts for coding LLMs.
 
 Rewrite the user's rough task description into a single, detailed, well-structured prompt with these sections:
@@ -11,6 +13,9 @@ One or two sentences stating exactly what to build.
 
 ## Tech Stack
 The language/framework to use. If the user didn't specify one, choose the most natural fit and state it explicitly.
+
+## Assumptions
+Every decision the user left open (interface, storage, data shapes, styling) with the concrete default you chose — so the coder never has to guess.
 
 ## Requirements
 A numbered list of concrete, testable requirements covering core functionality, inputs, and outputs.
@@ -22,19 +27,21 @@ The specific edge cases and failure modes the code must handle.
 Complete, runnable code in a single file unless the task demands otherwise; clear naming; comments only where logic is non-obvious; no placeholders or TODOs.
 
 Rules:
-- Preserve every explicit detail the user gave; never change or drop their requirements.
+- Preserve every explicit detail the user gave; never change, drop, or weaken their requirements.
+- Resolve vague ideas by choosing the simplest concrete interpretation and stating it under Assumptions — never ask the user questions.
 - Do not invent features beyond the reasonable scope of the request.
 - Keep the prompt under ~400 words.
-- Output ONLY the rewritten prompt in markdown. No preamble, no commentary, no code."""
+- Output ONLY the rewritten prompt in markdown. No preamble, no commentary, no code, no questions."""
 
 DEFAULT_CODER_SYSTEM = """You are an expert software engineer. Implement the user's specification exactly.
 
 Rules:
 - Write complete, runnable, production-quality code — no placeholders, stubs, or omitted sections.
 - Follow the specified tech stack; if unspecified, choose the most standard option and stick to it.
+- If the spec is ambiguous or contradicts itself on a detail, pick the most reasonable interpretation and note it in a brief comment — never stop to ask.
 - Handle the stated edge cases and add sensible error handling.
 - Comment only where the logic is non-obvious.
-- Output a single fenced code block containing the full solution, tagged with the language (for example ```python). No prose before or after the code block."""
+- Output a single fenced code block containing the full solution, tagged with the language (for example ```python). No prose before or after the code block, and make sure the closing fence is present."""
 
 
 def _render_preset_selector(role: str, label: str, config: dict) -> None:
@@ -118,6 +125,51 @@ def _render_save_custom_preset(role: str, label: str, prompt_text: str, config: 
             st.success(f"Saved '{preset_name.strip()}'")
 
 
+def _render_preset_suggestion(task: str, config: dict) -> None:
+    """Offer the preset pair matching the typed task, with one-click Apply.
+    Purely advisory — nothing changes unless the user clicks."""
+    suggestion = suggest_presets(task)
+    if not suggestion:
+        return
+    merged = get_merged_presets(config)
+    p_cat, p_name = suggestion["prompter"]
+    c_cat, c_name = suggestion["coder"]
+    p_text = merged.get("prompter", {}).get(p_cat, {}).get(p_name, "")
+    c_text = merged.get("coder", {}).get(c_cat, {}).get(c_name, "")
+    if not p_text or not c_text:
+        return  # preset missing (shouldn't happen) — suggest nothing
+
+    if (
+        st.session_state.get("prompter_system") == p_text
+        and st.session_state.get("coder_system") == c_text
+    ):
+        st.caption(f"Presets loaded for this task: **{p_name}** + **{c_name}**")
+        return
+
+    col_hint, col_apply = st.columns([4, 1])
+    with col_hint:
+        st.caption(
+            f"This looks like {suggestion['label']} — suggested presets: "
+            f"**{p_name}** (Prompter) + **{c_name}** (Coder)"
+        )
+    with col_apply:
+        if st.button(
+            "Apply",
+            key="apply_suggested_presets",
+            use_container_width=True,
+            help="Load both suggested presets as the system prompts for this run",
+        ):
+            st.session_state["prompter_system"] = p_text
+            st.session_state["coder_system"] = c_text
+            # Drop widget state so the expander text areas pick up the new values
+            st.session_state.pop("prompter_system_input", None)
+            st.session_state.pop("coder_system_input", None)
+            st.session_state["_preset_loaded_toast"] = (
+                f"Loaded “{p_name}” + “{c_name}”"
+            )
+            st.rerun()
+
+
 def render_task_input():
     """Render the task description input page."""
     st.markdown("## What do you want to build?")
@@ -142,8 +194,11 @@ def render_task_input():
         label_visibility="collapsed",
     )
 
-    # ── System Prompts with Preset Selectors ──
     config = st.session_state.get("config", {})
+
+    # ── Preset suggestion for the typed task ──
+    if task and task.strip():
+        _render_preset_suggestion(task, config)
 
     with st.expander("System prompts & presets", expanded=False):
         st.markdown(
@@ -210,6 +265,15 @@ def render_task_input():
             type="primary",
             use_container_width=True,
             disabled=(not task or not task.strip()),
+        )
+        st.toggle(
+            "Quick mode — skip prompt review",
+            key="quick_mode",
+            help=(
+                "Send the Prompter's output straight to the Coder without "
+                "stopping at the Review step. You can still edit the prompt "
+                "and regenerate from the output page."
+            ),
         )
 
     if generate_clicked and task and task.strip():

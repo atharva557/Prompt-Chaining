@@ -20,7 +20,9 @@ def render_prompt_review():
     Render the prompt review and edit page.
     Returns:
         'confirm' if user confirmed the prompt,
-        'retry' if user wants to try again,
+        'retry' if user wants a full regeneration from the task,
+        'refine' if user wants the Prompter to revise the current prompt
+            (instruction stored in st.session_state['prompt_refine_instruction']),
         None if no action taken.
     """
     st.markdown("## Review the generated prompt")
@@ -54,6 +56,34 @@ def render_prompt_review():
             st.code(diff_text, language="diff")
         else:
             st.caption("No differences.")
+
+    # ── Revise: send the current prompt + an instruction to the Prompter ──
+    st.markdown("#### Revise")
+    revise_text = st.text_area(
+        "Revision instruction",
+        placeholder=(
+            "e.g., Add keyboard controls to the requirements, drop the "
+            "database part, make it shorter"
+        ),
+        height=80,
+        key="prompt_refine_area",
+        label_visibility="collapsed",
+    )
+    revise_clicked = st.button(
+        "Revise prompt",
+        key="revise_prompt_btn",
+        disabled=(not revise_text or not revise_text.strip()),
+        help=(
+            "Sends the current prompt plus this instruction back to the "
+            "Prompter, which edits it in place instead of regenerating "
+            "from scratch"
+        ),
+    )
+    if revise_clicked and revise_text and revise_text.strip():
+        # Revise what's on screen, including any manual edits
+        st.session_state["generated_prompt"] = edited_prompt
+        st.session_state["prompt_refine_instruction"] = revise_text.strip()
+        return "refine"
 
     # ── Action Buttons ──
     col1, col_spacer, col2 = st.columns([1, 1, 1])

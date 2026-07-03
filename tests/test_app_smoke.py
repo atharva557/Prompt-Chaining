@@ -203,6 +203,37 @@ class TestPresetsPage(AppSmokeTestCase):
         self.assertIn("create_preset_prompter", keys)
 
 
+class TestTaskInputPage(AppSmokeTestCase):
+    def test_quick_mode_toggle_renders(self):
+        at = self._run_app()
+        at.session_state["page"] = "pipeline"
+        at.run()
+        self.assertFalse(at.exception)
+        # The toggle widget registers its key in session state
+        self.assertIn("quick_mode", at.session_state)
+
+    def test_preset_suggestion_appears_for_matching_task(self):
+        at = self._run_app()
+        at.session_state["page"] = "pipeline"
+        at.run()
+        at.text_area(key="task_input_area").set_value("a snake game in the browser")
+        at.run()
+        self.assertFalse(at.exception)
+        self.assertIn("apply_suggested_presets", [b.key for b in at.button])
+        # Applying loads both suggested presets as the system prompts
+        at.button(key="apply_suggested_presets").click().run()
+        self.assertFalse(at.exception)
+        merged = config_mod.get_merged_presets(config_mod.load_config())
+        self.assertEqual(
+            at.session_state["prompter_system"],
+            merged["prompter"]["Games & Graphics"]["Browser Game Designer"],
+        )
+        self.assertEqual(
+            at.session_state["coder_system"],
+            merged["coder"]["Games & Graphics"]["Browser Game Developer"],
+        )
+
+
 class TestPipelinePages(AppSmokeTestCase):
     """Render the review and output steps by seeding session state."""
 
@@ -214,7 +245,9 @@ class TestPipelinePages(AppSmokeTestCase):
         at.session_state["generated_prompt"] = "## Goal\nBuild a snake game"
         at.run()
         self.assertFalse(at.exception)
-        self.assertIn("confirm_prompt_btn", [b.key for b in at.button])
+        keys = [b.key for b in at.button]
+        self.assertIn("confirm_prompt_btn", keys)
+        self.assertIn("revise_prompt_btn", keys)  # revise-with-Prompter box
 
     def test_output_page_renders_with_refine_box(self):
         at = self._run_app()
