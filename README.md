@@ -71,7 +71,7 @@ The free local **review gate** at step 3 is the trick behind the hybrid mode: yo
 | 🕘  | **Run history**                  | Past runs persist across restarts; reopen or delete them from the sidebar                                                               |
 | ♻️ | **Refine in place**              | Send a follow-up instruction ("make the board bigger") to edit the code without regenerating from scratch                               |
 | 💬  | **Direct chats**                 | ChatGPT-style pages for just the Prompter or just the Coder when you don't need the full pipeline                                       |
-| 📋  | **37 built-in presets**          | Across General, Web Development, Data & Scripts, Games & Graphics, Systems & CLI, and Testing                                            |
+| 📋  | **46 built-in presets**          | Across General, Web Development, Data & Scripts, Games & Graphics, Systems & CLI, Testing, Debug & Refactor, Languages, and Machine Learning |
 | ✏️ | **Presets manager**              | Browse and edit every preset; edits to built-ins are saved as overrides (reset to default anytime), plus create/delete your own         |
 | 🗂️ | **Smart file output**            | Auto language detection, suggested filenames, timestamped saves, browser download                                                       |
 | 🌙  | **Polished dark UI**             | Clean Tokyo Night theme; tokens/sec for local runs and exact tokens + a cost estimate for cloud                                         |
