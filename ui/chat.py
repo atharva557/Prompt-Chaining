@@ -11,9 +11,14 @@ import time
 
 import streamlit as st
 
-from core.api import unload_model, is_cloud, estimate_cost, BACKEND_LABELS, cancel_unload
-from core.config import get_role_endpoint
+from core.api import unload_model, is_cloud, format_stream_stats, BACKEND_LABELS, cancel_unload
+from core.chats import load_chat_messages, save_chat_messages
+from core.config import get_role_endpoint, swap_enabled
 from core.streaming import stream_completion, PROMPTER_TIMEOUT, CODER_TIMEOUT
+from ui.code_output import extract_code
+
+# app.py's STEP_PROMPT_REVIEW — the pipeline step a chat prompt is handed to
+_STEP_PROMPT_REVIEW = 1
 
 # Starter prompts shown on an empty chat
 ROLE_EXAMPLES = {
@@ -58,6 +63,28 @@ ROLE_META = {
 }
 
 
+def _handoff_to_pipeline(msgs: list[dict], idx: int) -> None:
+    """Open the pipeline's review step with the assistant message at `idx`
+    as the generated prompt (the fenced block if there is one, since the
+    chat Prompter wraps prompts in conversational text)."""
+    prompt_text, _lang = extract_code(msgs[idx]["content"])
+    # The nearest preceding user message doubles as the task description
+    task = next(
+        (m["content"] for m in reversed(msgs[:idx]) if m["role"] == "user"), ""
+    )
+    if task:
+        st.session_state["task_description"] = task
+    st.session_state["generated_prompt"] = prompt_text
+    st.session_state["current_step"] = _STEP_PROMPT_REVIEW
+    st.session_state["coder_mode"] = "full"
+    st.session_state["coder_error"] = ""
+    st.session_state["coder_partial"] = ""
+    st.session_state["page"] = "pipeline"
+    # Drop stale widget state so the review/task areas show the new content
+    st.session_state.pop("prompt_review_area", None)
+    st.session_state.pop("task_input_area", None)
+
+
 def render_chat(role: str, config: dict) -> None:
     """Render a full chat page for 'prompter' or 'coder'."""
     meta = ROLE_META[role]
@@ -66,7 +93,8 @@ def render_chat(role: str, config: dict) -> None:
     system_key = f"chat_{role}_system"
 
     if msgs_key not in st.session_state:
-        st.session_state[msgs_key] = []
+        # Conversations persist across restarts (chats.json)
+        st.session_state[msgs_key] = load_chat_messages(role)
     if system_key not in st.session_state:
         st.session_state[system_key] = meta["default_system"]
 
@@ -80,6 +108,11 @@ def render_chat(role: str, config: dict) -> None:
         msgs.append(
             {"role": "assistant", "content": partial + "\n\n*— stopped —*"}
         )
+        save_chat_messages(role, msgs)
+
+    def _clear_chat():
+        st.session_state[msgs_key].clear()
+        save_chat_messages(role, [])
 
     endpoint = get_role_endpoint(config, role)
     model = endpoint["model"]
@@ -97,7 +130,7 @@ def render_chat(role: str, config: dict) -> None:
             "Clear chat",
             key=f"chat_{role}_clear",
             use_container_width=True,
-            on_click=lambda: st.session_state[msgs_key].clear(),
+            on_click=_clear_chat,
         )
 
     with st.expander("System prompt", expanded=False):
@@ -110,9 +143,22 @@ def render_chat(role: str, config: dict) -> None:
         )
 
     # ── Conversation history ──
-    for m in msgs:
+    for i, m in enumerate(msgs):
         with st.chat_message(m["role"]):
             st.markdown(m["content"])
+            # Prompter replies can jump straight into the pipeline: the
+            # message becomes the prompt awaiting review before the Coder runs
+            if role == "prompter" and m["role"] == "assistant" and m["content"].strip():
+                if st.button(
+                    "Use as pipeline prompt",
+                    key=f"chat_use_in_pipeline_{i}",
+                    help=(
+                        "Open the pipeline's review step with this message "
+                        "as the prompt for the Coder"
+                    ),
+                ):
+                    _handoff_to_pipeline(msgs, i)
+                    st.rerun()
 
     # chat_input always pins to the page bottom; a clicked example seeds it
     seeded = st.session_state.pop(f"chat_{role}_seed", "")
@@ -137,10 +183,15 @@ def render_chat(role: str, config: dict) -> None:
         st.markdown(user_msg)
 
     # ── Cooperative VRAM swap (pipeline + other chat) ──
-    # Evict the other role's local model; no-op when it's a cloud backend.
+    # Evict the other role's local model; no-op when it's a cloud backend
+    # or when the swap policy says both models fit in VRAM.
     other = meta["other"]
     other_ep = get_role_endpoint(config, other)
-    if st.session_state.get("last_model_role") == other and not is_cloud(other_ep["backend"]):
+    if (
+        st.session_state.get("last_model_role") == other
+        and not is_cloud(other_ep["backend"])
+        and swap_enabled(config)
+    ):
         with st.spinner(f"Unloading {ROLE_META[other]['label']} model…"):
             unload_model(other_ep["base_url"], other_ep["model"], other_ep["backend"])
     st.session_state["last_model_role"] = role
@@ -155,11 +206,15 @@ def render_chat(role: str, config: dict) -> None:
     stop_slot.button("Stop", key=f"chat_{role}_stop")
 
     with st.chat_message("assistant"):
+        reasoning_slot = st.empty()
+        reasoning_box = None
         out = st.empty()
+        stats_slot = st.empty()
         full = ""
         error = ""
         chunk_count = 0
         usage: dict = {}
+        reasoning: dict = {}
         start = time.perf_counter()
 
         try:
@@ -177,12 +232,29 @@ def render_chat(role: str, config: dict) -> None:
                 timeout=meta["timeout"],
                 api_key=endpoint["api_key"],
                 usage_out=usage,
+                reasoning_out=reasoning,
             )
             for token in stream:
+                # Thinking models: hidden reasoning goes into a collapsed
+                # expander above the reply, not into the reply itself
+                if reasoning.get("text"):
+                    if reasoning_box is None:
+                        with reasoning_slot.container():
+                            with st.expander("Model reasoning", expanded=False):
+                                reasoning_box = st.empty()
+                    reasoning_box.markdown(reasoning["text"])
+                if not token:
+                    continue  # reasoning-only chunk
                 chunk_count += 1
                 full += token
                 st.session_state[partial_key] = full
                 out.markdown(full + " ▌")
+                if chunk_count % 24 == 0:
+                    elapsed = time.perf_counter() - start
+                    if elapsed > 0:
+                        stats_slot.caption(
+                            f"~{chunk_count} tokens · {chunk_count / elapsed:.1f} tok/s"
+                        )
         except (ConnectionError, TimeoutError, RuntimeError) as e:
             error = str(e)
         except Exception as e:
@@ -197,26 +269,13 @@ def render_chat(role: str, config: dict) -> None:
         out.markdown(full)
 
         if chunk_count and not error:
-            elapsed = time.perf_counter() - start
-            stats = []
-            if elapsed > 0:
-                stats.append(
-                    f"~{chunk_count} tokens in {elapsed:.1f}s "
-                    f"({chunk_count / elapsed:.1f} tok/s)"
-                )
-            if usage.get("input_tokens") is not None or usage.get("output_tokens") is not None:
-                stats.append(
-                    f"{usage.get('input_tokens', '?')} in / "
-                    f"{usage.get('output_tokens', '?')} out tokens"
-                )
-                cost = estimate_cost(
-                    model, usage.get("input_tokens"), usage.get("output_tokens")
-                )
-                if cost is not None:
-                    stats.append(f"~${cost:.4f} est.")
-            if stats:
-                st.caption(" · ".join(stats))
+            stats_line = format_stream_stats(
+                model, chunk_count, time.perf_counter() - start, usage
+            )
+            if stats_line:
+                stats_slot.caption(stats_line)
 
     msgs.append({"role": "assistant", "content": full})
+    save_chat_messages(role, msgs)
     st.session_state.pop(partial_key, None)
     stop_slot.empty()

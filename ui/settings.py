@@ -36,6 +36,7 @@ def _ensure_widget_defaults(config: dict):
         "settings_prompter_tokens": config.get("prompter_max_tokens", 1024),
         "settings_coder_tokens": config.get("coder_max_tokens", 4096),
         "settings_idle_unload_minutes": config.get("idle_unload_minutes", 5),
+        "settings_swap_policy": config.get("swap_policy", "auto"),
         "settings_output_folder": config.get("output_folder", "./output"),
     }
     for key, value in defaults.items():
@@ -305,6 +306,20 @@ def render_settings():
                 "cloud backends are unaffected."
             ),
         )
+        st.selectbox(
+            "VRAM swap policy",
+            options=["auto", "never"],
+            format_func=lambda v: {
+                "auto": "Auto — unload one model before running the other",
+                "never": "Never — both models fit in VRAM at once",
+            }[v],
+            key="settings_swap_policy",
+            help=(
+                "'Auto' frees the Prompter's VRAM before the Coder runs "
+                "(single-GPU default). Pick 'Never' if your GPU holds both "
+                "models — it skips the unload/reload cycle entirely."
+            ),
+        )
 
     # Same local model for both roles defeats the VRAM swap
     if (
@@ -343,6 +358,8 @@ def render_settings():
             "prompter_max_tokens": st.session_state["settings_prompter_tokens"],
             "coder_max_tokens": st.session_state["settings_coder_tokens"],
             "idle_unload_minutes": st.session_state["settings_idle_unload_minutes"],
+            "swap_policy": st.session_state["settings_swap_policy"],
+            "pipeline_profiles": config.get("pipeline_profiles", {}),
             "custom_presets": config.get("custom_presets", {}),
             "preset_overrides": config.get("preset_overrides", {}),
         }

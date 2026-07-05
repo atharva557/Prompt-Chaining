@@ -76,6 +76,38 @@ def estimate_cost(model: str, input_tokens, output_tokens) -> float | None:
     return None
 
 
+def rough_token_count(*texts: str) -> int:
+    """Very rough token estimate (~4 chars/token) across the given strings.
+    Good enough for a context-size warning; never used for billing."""
+    return sum(len(t) for t in texts if t) // 4
+
+
+def format_stream_stats(
+    model: str, chunk_count: int, elapsed: float, usage: dict
+) -> str:
+    """One-line stats caption for a generation: chunk-based tok/s estimate,
+    plus exact billed tokens and estimated cost when the backend reported
+    usage. Returns '' when there is nothing to show."""
+    stats = []
+    if chunk_count and elapsed > 0:
+        # One SSE chunk is roughly one token
+        stats.append(
+            f"~{chunk_count} tokens in {elapsed:.1f}s "
+            f"({chunk_count / elapsed:.1f} tok/s)"
+        )
+    if usage.get("input_tokens") is not None or usage.get("output_tokens") is not None:
+        stats.append(
+            f"{usage.get('input_tokens', '?')} in / "
+            f"{usage.get('output_tokens', '?')} out tokens"
+        )
+        cost = estimate_cost(
+            model, usage.get("input_tokens"), usage.get("output_tokens")
+        )
+        if cost is not None:
+            stats.append(f"~${cost:.4f} est.")
+    return " · ".join(stats)
+
+
 def chat_completions_url(base_url: str, backend: str) -> str:
     """Chat-completions endpoint for a backend (Anthropic excluded — it
     goes through the official SDK, not an OpenAI-compatible path)."""

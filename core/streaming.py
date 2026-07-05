@@ -21,6 +21,87 @@ PROMPTER_TIMEOUT = 180   # 3 minutes for small/fast prompter models
 CODER_TIMEOUT = 900      # 15 minutes for larger coder models
 
 
+def _partial_suffix_len(buf: str, tag: str) -> int:
+    """Length of the longest strict prefix of `tag` that `buf` ends with —
+    i.e. how many trailing chars might be the start of a tag split across
+    chunk boundaries and must stay buffered."""
+    for k in range(min(len(tag) - 1, len(buf)), 0, -1):
+        if buf.endswith(tag[:k]):
+            return k
+    return 0
+
+
+class ThinkTagFilter:
+    """Incrementally strips a leading ``<think> … </think>`` reasoning block
+    (as emitted by DeepSeek-R1 / Qwen3 / GLM-style models) from streamed text.
+
+    Only a block that *opens* the output (after optional whitespace) is treated
+    as reasoning, so a literal ``<think>`` later in real output passes through
+    untouched. Tags split across chunk boundaries are handled by buffering.
+    The hidden reasoning accumulates in ``.reasoning``; call ``flush()`` once
+    the stream ends to release any still-buffered text.
+    """
+
+    OPEN = "<think>"
+    CLOSE = "</think>"
+
+    def __init__(self):
+        self.reasoning = ""
+        self._buf = ""
+        # 'start' → deciding whether the output opens with <think>;
+        # 'think' → inside the block; 'lead' → skipping whitespace after it;
+        # 'pass'  → verbatim passthrough for the rest of the stream.
+        self._state = "start"
+
+    def feed(self, text: str) -> str:
+        """Consume one streamed chunk, return the visible part (may be '')."""
+        if self._state == "pass":
+            return text
+        self._buf += text
+        if self._state == "start":
+            stripped = self._buf.lstrip()
+            if not stripped:
+                return ""  # only whitespace so far — keep waiting
+            if len(stripped) < len(self.OPEN) and self.OPEN.startswith(stripped):
+                return ""  # could still become '<think>' — keep buffering
+            if stripped.startswith(self.OPEN):
+                self._state = "think"
+                self._buf = stripped[len(self.OPEN):]
+            else:
+                out, self._buf = self._buf, ""
+                self._state = "pass"
+                return out
+        if self._state == "think":
+            idx = self._buf.find(self.CLOSE)
+            if idx < 0:
+                # keep a possible partial '</think>' buffered for the next chunk
+                keep = _partial_suffix_len(self._buf, self.CLOSE)
+                cut = len(self._buf) - keep
+                self.reasoning += self._buf[:cut]
+                self._buf = self._buf[cut:]
+                return ""
+            self.reasoning += self._buf[:idx]
+            self._buf = self._buf[idx + len(self.CLOSE):]
+            self._state = "lead"
+        if self._state == "lead":
+            visible = self._buf.lstrip()
+            self._buf = ""
+            if visible:
+                self._state = "pass"
+            return visible
+        return ""
+
+    def flush(self) -> str:
+        """Stream ended: return any buffered text that never became a tag.
+        An unterminated think block counts entirely as reasoning."""
+        out, self._buf = self._buf, ""
+        if self._state == "think":
+            self.reasoning += out
+            out = ""
+        self._state = "pass"
+        return out
+
+
 def stream_completion(
     base_url: str,
     model: str,
@@ -33,6 +114,7 @@ def stream_completion(
     messages: list[dict] | None = None,
     api_key: str = "",
     usage_out: dict | None = None,
+    reasoning_out: dict | None = None,
 ) -> Generator[str, None, None]:
     """
     Generator that yields text tokens as they arrive.
@@ -43,6 +125,11 @@ def stream_completion(
 
     If `usage_out` is provided, it is populated with {"input_tokens",
     "output_tokens"} once the backend reports usage (cloud backends only).
+
+    If `reasoning_out` is provided, hidden model reasoning (inline
+    ``<think>`` blocks or a ``reasoning_content`` delta field) accumulates
+    live under its "text" key instead of being yielded; the generator yields
+    an empty string on reasoning-only chunks so the UI can show progress.
 
     Yields:
         str: Individual text tokens as they arrive.
@@ -65,13 +152,13 @@ def stream_completion(
     else:
         yield from _stream_openai_compatible(
             base_url, model, messages, temperature, max_tokens,
-            backend, timeout, api_key, usage_out,
+            backend, timeout, api_key, usage_out, reasoning_out,
         )
 
 
 def _stream_openai_compatible(
     base_url, model, messages, temperature, max_tokens,
-    backend, timeout, api_key, usage_out,
+    backend, timeout, api_key, usage_out, reasoning_out=None,
 ) -> Generator[str, None, None]:
     """SSE streaming for local servers and OpenAI/Gemini clouds."""
     payload = {
@@ -90,6 +177,18 @@ def _stream_openai_compatible(
         payload["stream_options"] = {"include_usage": True}
 
     headers = {"Content-Type": "application/json", **_auth_headers(backend, api_key)}
+
+    # Reasoning models hide their thinking either inline (<think> tags in
+    # content) or in a separate delta field; both are collected here and kept
+    # out of the visible token stream.
+    think_filter = ThinkTagFilter()
+    field_reasoning = ""
+
+    def _sync_reasoning():
+        if reasoning_out is not None:
+            combined = field_reasoning + think_filter.reasoning
+            if combined:
+                reasoning_out["text"] = combined
 
     try:
         response = requests.post(
@@ -134,9 +233,31 @@ def _stream_openai_compatible(
 
             choices = chunk.get("choices") or []
             if choices:
-                token = choices[0].get("delta", {}).get("content", "")
+                delta = choices[0].get("delta") or {}
+                # DeepSeek-style servers stream thinking in a separate field
+                # (`reasoning_content`; OpenRouter uses `reasoning`)
+                thinking = delta.get("reasoning_content") or delta.get("reasoning")
+                if thinking:
+                    field_reasoning += thinking
+                    _sync_reasoning()
+                    yield ""  # no visible text, but let the UI show progress
+                token = delta.get("content", "")
                 if token:
-                    yield token
+                    hidden_before = len(think_filter.reasoning)
+                    visible = think_filter.feed(token)
+                    reasoned = len(think_filter.reasoning) > hidden_before
+                    if reasoned:
+                        _sync_reasoning()
+                    if visible:
+                        yield visible
+                    elif reasoned:
+                        yield ""
+
+        # Release anything the filter still holds (e.g. text that looked
+        # like a partial '<think>' but never completed the tag)
+        tail = think_filter.flush()
+        if tail:
+            yield tail
 
     except requests.ConnectionError:
         raise ConnectionError(

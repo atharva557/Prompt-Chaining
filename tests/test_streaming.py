@@ -9,6 +9,7 @@ skip, the forward-compatible retry-without-temperature, system extraction,
 usage reporting, and the error mapping contract app.py relies on.
 """
 
+import json
 import unittest
 from unittest import mock
 
@@ -16,6 +17,7 @@ import anthropic
 import httpx
 
 import core.streaming as streaming
+from core.streaming import ThinkTagFilter
 
 
 def _bad_request(message: str) -> anthropic.BadRequestError:
@@ -94,6 +96,119 @@ def _run(model, behaviors, *, temperature=0.5, usage_out=None):
             )
         )
     return tokens, fake.messages
+
+
+class TestThinkTagFilter(unittest.TestCase):
+    def _run_filter(self, chunks):
+        f = ThinkTagFilter()
+        visible = "".join(f.feed(c) for c in chunks)
+        visible += f.flush()
+        return visible, f.reasoning
+
+    def test_basic_strip(self):
+        visible, reasoning = self._run_filter(["<think>plan</think>hello"])
+        self.assertEqual(visible, "hello")
+        self.assertEqual(reasoning, "plan")
+
+    def test_tags_split_across_chunks(self):
+        visible, reasoning = self._run_filter(
+            ["<th", "ink>reas", "oning</th", "ink>\n\nanswer"]
+        )
+        self.assertEqual(visible, "answer")
+        self.assertEqual(reasoning, "reasoning")
+
+    def test_no_think_block_passes_through(self):
+        visible, reasoning = self._run_filter(["hello ", "world"])
+        self.assertEqual(visible, "hello world")
+        self.assertEqual(reasoning, "")
+
+    def test_think_tag_later_in_output_is_kept(self):
+        # Only a block that OPENS the output counts as reasoning
+        visible, reasoning = self._run_filter(["code about ", "<think> tags"])
+        self.assertEqual(visible, "code about <think> tags")
+        self.assertEqual(reasoning, "")
+
+    def test_leading_whitespace_before_block(self):
+        visible, reasoning = self._run_filter(["\n <think>hm</think>\n\nok"])
+        self.assertEqual(visible, "ok")
+        self.assertEqual(reasoning, "hm")
+
+    def test_partial_open_that_never_completes_is_flushed(self):
+        visible, _ = self._run_filter(["<think"])
+        self.assertEqual(visible, "<think")
+
+    def test_lookalike_word_passes_through(self):
+        visible, _ = self._run_filter(["<thinker>text"])
+        self.assertEqual(visible, "<thinker>text")
+
+    def test_unterminated_block_is_all_reasoning(self):
+        visible, reasoning = self._run_filter(["<think>never ", "ends"])
+        self.assertEqual(visible, "")
+        self.assertEqual(reasoning, "never ends")
+
+
+class _FakeSSEResponse:
+    """Minimal stand-in for a streaming requests.Response."""
+
+    status_code = 200
+
+    def __init__(self, lines):
+        self._lines = lines
+
+    def iter_lines(self):
+        return iter(self._lines)
+
+
+def _sse(payload: dict) -> bytes:
+    return b"data: " + json.dumps(payload).encode()
+
+
+def _content(text: str) -> bytes:
+    return _sse({"choices": [{"delta": {"content": text}}]})
+
+
+def _collect_openai(lines, reasoning_out=None):
+    """Run the OpenAI-compatible path against canned SSE lines."""
+    fake = _FakeSSEResponse(lines + [b"data: [DONE]"])
+    with mock.patch.object(streaming.requests, "post", return_value=fake):
+        return list(
+            streaming.stream_completion(
+                base_url="http://localhost:1234",
+                model="local-model",
+                system_prompt="sys",
+                user_message="hi",
+                backend="lmstudio",
+                reasoning_out=reasoning_out,
+            )
+        )
+
+
+class TestOpenAIReasoningStream(unittest.TestCase):
+    def test_inline_think_block_stripped_and_collected(self):
+        reasoning: dict = {}
+        tokens = _collect_openai(
+            [_content("<th"), _content("ink>plan"), _content("</think>"), _content("code")],
+            reasoning_out=reasoning,
+        )
+        self.assertEqual("".join(tokens), "code")
+        self.assertEqual(reasoning.get("text"), "plan")
+
+    def test_reasoning_content_field_collected(self):
+        reasoning: dict = {}
+        tokens = _collect_openai(
+            [
+                _sse({"choices": [{"delta": {"reasoning_content": "thinking "}}]}),
+                _sse({"choices": [{"delta": {"reasoning_content": "hard"}}]}),
+                _content("answer"),
+            ],
+            reasoning_out=reasoning,
+        )
+        self.assertEqual("".join(tokens), "answer")
+        self.assertEqual(reasoning.get("text"), "thinking hard")
+
+    def test_plain_stream_unchanged(self):
+        tokens = _collect_openai([_content("a"), _content("b")])
+        self.assertEqual("".join(tokens), "ab")
 
 
 class TestOmitsTemperature(unittest.TestCase):

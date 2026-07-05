@@ -136,6 +136,59 @@ class TestRoleEndpoint(ConfigTestCase):
         self.assertEqual(ep["api_key"], "")
 
 
+class TestSwapPolicy(ConfigTestCase):
+    def test_default_is_auto_and_enabled(self):
+        cfg = config_mod.get_default_config()
+        self.assertEqual(cfg["swap_policy"], "auto")
+        self.assertTrue(config_mod.swap_enabled(cfg))
+
+    def test_never_disables_swapping(self):
+        cfg = config_mod.get_default_config()
+        cfg["swap_policy"] = "never"
+        self.assertFalse(config_mod.swap_enabled(cfg))
+
+    def test_missing_key_treated_as_auto(self):
+        # Pre-upgrade configs have no swap_policy key
+        self.assertTrue(config_mod.swap_enabled({}))
+
+
+class TestPipelineProfiles(ConfigTestCase):
+    def _make_profile(self):
+        cfg = config_mod.get_default_config()
+        cfg["coder_backend"] = "anthropic"
+        cfg["coder_base_url"] = "https://api.anthropic.com"
+        cfg["coder_model"] = "claude-opus-4-8"
+        cfg["coder_temperature"] = 0.2
+        return config_mod.capture_pipeline_profile(cfg, "P-SYS", "C-SYS")
+
+    def test_capture_snapshots_endpoints_and_prompts(self):
+        profile = self._make_profile()
+        self.assertEqual(profile["coder_model"], "claude-opus-4-8")
+        self.assertEqual(profile["coder_backend"], "anthropic")
+        self.assertEqual(profile["prompter_system"], "P-SYS")
+        self.assertEqual(profile["coder_system"], "C-SYS")
+
+    def test_apply_writes_config_and_persists(self):
+        profile = self._make_profile()
+        cfg = config_mod.get_default_config()  # fresh, all-local defaults
+        cfg = config_mod.apply_pipeline_profile(cfg, profile)
+        self.assertEqual(cfg["coder_backend"], "anthropic")
+        self.assertEqual(cfg["coder_temperature"], 0.2)
+        # persisted to disk
+        self.assertEqual(config_mod.load_config()["coder_model"], "claude-opus-4-8")
+
+    def test_save_and_delete_profile(self):
+        cfg = config_mod.get_default_config()
+        cfg = config_mod.save_pipeline_profile(cfg, "Cloud pass", self._make_profile())
+        self.assertIn("Cloud pass", config_mod.load_config()["pipeline_profiles"])
+        cfg = config_mod.delete_pipeline_profile(cfg, "Cloud pass")
+        self.assertNotIn("Cloud pass", config_mod.load_config()["pipeline_profiles"])
+
+    def test_delete_missing_profile_is_noop(self):
+        cfg = config_mod.get_default_config()
+        config_mod.delete_pipeline_profile(cfg, "Ghost")  # must not raise
+
+
 class TestCustomPresets(ConfigTestCase):
     def test_save_and_merge_custom_preset(self):
         cfg = config_mod.get_default_config()

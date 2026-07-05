@@ -1,5 +1,12 @@
 import streamlit as st
-from core.config import get_merged_presets, save_custom_preset
+from core.config import (
+    get_merged_presets,
+    save_custom_preset,
+    capture_pipeline_profile,
+    apply_pipeline_profile,
+    save_pipeline_profile,
+    delete_pipeline_profile,
+)
 from core.suggest import suggest_presets
 
 # Default system prompts (fallbacks if presets fail to load). Kept in sync
@@ -170,6 +177,89 @@ def _render_preset_suggestion(task: str, config: dict) -> None:
             st.rerun()
 
 
+def _render_pipeline_profiles(config: dict) -> None:
+    """Named snapshots of the whole pipeline setup (endpoints, sampling
+    params, system prompts). Applying one rewrites config + session prompts,
+    so switching e.g. 'local drafting' ↔ 'cloud final pass' is one click."""
+    profiles = config.get("pipeline_profiles", {})
+
+    with st.expander("Pipeline profiles", expanded=False):
+        st.caption(
+            "Save the current setup — backends, models, temperatures, and "
+            "system prompts — under a name, and switch whole setups in one "
+            "click (e.g. *Local drafting* vs *Cloud final pass*)."
+        )
+
+        if profiles:
+            col_sel, col_apply, col_del = st.columns([3, 1, 1])
+            with col_sel:
+                selected = st.selectbox(
+                    "Profile",
+                    options=sorted(profiles),
+                    key="pipeline_profile_select",
+                    label_visibility="collapsed",
+                )
+            profile = profiles.get(selected, {})
+            with col_apply:
+                if st.button(
+                    "Apply",
+                    key="apply_pipeline_profile",
+                    use_container_width=True,
+                    help="Switch backends, models, params, and system prompts to this profile",
+                ):
+                    st.session_state["config"] = apply_pipeline_profile(config, profile)
+                    for role in ("prompter", "coder"):
+                        if profile.get(f"{role}_system"):
+                            st.session_state[f"{role}_system"] = profile[f"{role}_system"]
+                            st.session_state.pop(f"{role}_system_input", None)
+                    st.session_state["_preset_loaded_toast"] = f"Applied profile “{selected}”"
+                    st.rerun()
+            with col_del:
+                if st.button(
+                    "Delete", key="delete_pipeline_profile", use_container_width=True
+                ):
+                    st.session_state["config"] = delete_pipeline_profile(config, selected)
+                    st.rerun()
+            if profile:
+                st.caption(
+                    f"Prompter: `{profile.get('prompter_model') or '—'}` on "
+                    f"{profile.get('prompter_backend', '?')} · "
+                    f"Coder: `{profile.get('coder_model') or '—'}` on "
+                    f"{profile.get('coder_backend', '?')}"
+                )
+        else:
+            st.caption("No profiles saved yet.")
+
+        col_name, col_save = st.columns([3, 1])
+        with col_name:
+            new_name = st.text_input(
+                "New profile name",
+                key="pipeline_profile_name",
+                placeholder="Name this setup, e.g. Cloud final pass",
+                label_visibility="collapsed",
+            )
+        with col_save:
+            if st.button(
+                "Save current",
+                key="save_pipeline_profile",
+                use_container_width=True,
+                disabled=not (new_name and new_name.strip()),
+                help="Snapshot the current backends, models, params, and system prompts",
+            ):
+                profile = capture_pipeline_profile(
+                    config,
+                    st.session_state.get("prompter_system", DEFAULT_PROMPTER_SYSTEM),
+                    st.session_state.get("coder_system", DEFAULT_CODER_SYSTEM),
+                )
+                st.session_state["config"] = save_pipeline_profile(
+                    config, new_name.strip(), profile
+                )
+                st.session_state["_preset_loaded_toast"] = (
+                    f"Saved profile “{new_name.strip()}”"
+                )
+                st.rerun()
+
+
 def render_task_input():
     """Render the task description input page."""
     st.markdown("## What do you want to build?")
@@ -199,6 +289,9 @@ def render_task_input():
     # ── Preset suggestion for the typed task ──
     if task and task.strip():
         _render_preset_suggestion(task, config)
+
+    # ── Named pipeline profiles (apply / save / delete) ──
+    _render_pipeline_profiles(config)
 
     with st.expander("System prompts & presets", expanded=False):
         st.markdown(

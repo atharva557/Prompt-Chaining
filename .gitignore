@@ -1,5 +1,6 @@
 config.json
 history.json
+chats.json
 output/
 __pycache__/
 *.pyc

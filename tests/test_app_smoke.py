@@ -12,6 +12,7 @@ from pathlib import Path
 
 from streamlit.testing.v1 import AppTest
 
+import core.chats as chats_mod
 import core.config as config_mod
 import core.history as history_mod
 
@@ -26,8 +27,10 @@ class AppSmokeTestCase(unittest.TestCase):
         tmp = Path(self._tmpdir.name)
         self._orig_config_path = config_mod.CONFIG_PATH
         self._orig_history_path = history_mod.HISTORY_PATH
+        self._orig_chats_path = chats_mod.CHATS_PATH
         config_mod.CONFIG_PATH = tmp / "config.json"
         history_mod.HISTORY_PATH = tmp / "history.json"
+        chats_mod.CHATS_PATH = tmp / "chats.json"
         cfg = config_mod.get_default_config()
         cfg["prompter_model"] = "test-prompter"
         cfg["coder_model"] = "test-coder"
@@ -36,6 +39,7 @@ class AppSmokeTestCase(unittest.TestCase):
     def tearDown(self):
         config_mod.CONFIG_PATH = self._orig_config_path
         history_mod.HISTORY_PATH = self._orig_history_path
+        chats_mod.CHATS_PATH = self._orig_chats_path
         self._tmpdir.cleanup()
 
     def _run_app(self) -> AppTest:
@@ -189,6 +193,42 @@ class TestLoadPreset(AppSmokeTestCase):
         )
         # A confirmation toast was shown
         self.assertTrue(any("Loaded" in t.value for t in at.toast))
+
+    def test_load_preset_for_coder_role(self):
+        at = self._run_app()
+        at.session_state["page"] = "pipeline"
+        at.run()
+        at.button(key="load_preset_coder").click().run()
+        self.assertFalse(at.exception)
+        merged = config_mod.get_merged_presets(config_mod.load_config())
+        cat = list(merged["coder"])[0]
+        name = list(merged["coder"][cat])[0]
+        self.assertEqual(
+            at.session_state["coder_system"], merged["coder"][cat][name]
+        )
+
+    def test_load_after_category_switch(self):
+        # Switching category re-filters the name dropdown (stale widget-state
+        # scenario); loading must pick from the NEW category without error.
+        at = self._run_app()
+        at.session_state["page"] = "pipeline"
+        at.run()
+        cats = at.selectbox(key="preset_category_prompter").options
+        self.assertGreater(len(cats), 1)
+        at.selectbox(key="preset_category_prompter").select(cats[1])
+        at.run()
+        self.assertFalse(at.exception)
+        merged = config_mod.get_merged_presets(config_mod.load_config())
+        name_widget = at.selectbox(key="preset_name_prompter")
+        self.assertEqual(
+            set(name_widget.options), set(merged["prompter"][cats[1]].keys())
+        )
+        picked = name_widget.value
+        at.button(key="load_preset_prompter").click().run()
+        self.assertFalse(at.exception)
+        self.assertEqual(
+            at.session_state["prompter_system"], merged["prompter"][cats[1]][picked]
+        )
 
 
 class TestPresetsPage(AppSmokeTestCase):

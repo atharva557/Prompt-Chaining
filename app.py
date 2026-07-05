@@ -10,12 +10,12 @@ import time
 
 import streamlit as st
 
-from core.config import config_exists, load_config, get_role_endpoint
+from core.config import config_exists, load_config, get_role_endpoint, swap_enabled
 from core.api import (
     test_connection,
     unload_model,
     is_cloud,
-    estimate_cost,
+    format_stream_stats,
     BACKEND_LABELS,
     schedule_unload,
     cancel_unload,
@@ -103,6 +103,9 @@ def init_session_state():
         # Which role's model most recently handled a request (pipeline or
         # chat), so all generation paths can swap VRAM cooperatively.
         "last_model_role": None,
+        # Previous code outputs of this run (newest last), so a refine or
+        # regenerate that makes things worse can be compared and reverted.
+        "code_versions": [],
     }
     for key, value in defaults.items():
         if key not in st.session_state:
@@ -126,6 +129,7 @@ def reset_pipeline():
     st.session_state["prompt_refine_instruction"] = ""
     st.session_state["needs_swap"] = False
     st.session_state["show_settings"] = False
+    st.session_state["code_versions"] = []
     # Drop widget state so inputs re-initialize cleanly
     for key in (
         "task_input_area",
@@ -399,6 +403,7 @@ def run_streaming_generation(
     first_token = True
     chunk_count = 0
     usage: dict = {}
+    reasoning: dict = {}
     start_time = time.perf_counter()
 
     try:
@@ -414,16 +419,31 @@ def run_streaming_generation(
             messages=messages,
             api_key=endpoint["api_key"],
             usage_out=usage,
+            reasoning_out=reasoning,
         )
 
-        # Create a placeholder for streaming output
+        # Placeholders in display order: hidden reasoning (filled lazily,
+        # only for thinking models), then the output, then live stats.
+        reasoning_slot = st.empty()
+        reasoning_box = None
         output_placeholder = st.empty()
+        stats_placeholder = st.empty()
 
         for token in stream:
             if first_token:
                 first_token = False
                 if on_first_token:
                     on_first_token()
+            # Thinking models: stream the hidden reasoning into a collapsed
+            # expander instead of polluting the prompt/code output
+            if reasoning.get("text"):
+                if reasoning_box is None:
+                    with reasoning_slot.container():
+                        with st.expander("Model reasoning", expanded=False):
+                            reasoning_box = st.empty()
+                reasoning_box.markdown(reasoning["text"])
+            if not token:
+                continue  # reasoning-only chunk
             chunk_count += 1
             full_output += token
             if partial_key:
@@ -432,30 +452,18 @@ def run_streaming_generation(
                 output_placeholder.code(full_output, line_numbers=True)
             else:
                 output_placeholder.markdown(full_output)
+            if chunk_count % 24 == 0:
+                elapsed = time.perf_counter() - start_time
+                if elapsed > 0:
+                    stats_placeholder.caption(
+                        f"~{chunk_count} tokens · {chunk_count / elapsed:.1f} tok/s"
+                    )
 
-        elapsed = time.perf_counter() - start_time
-        stats = []
-        if chunk_count and elapsed > 0:
-            # One SSE chunk is roughly one token
-            stats.append(
-                f"~{chunk_count} tokens in {elapsed:.1f}s "
-                f"({chunk_count / elapsed:.1f} tok/s)"
-            )
-        if usage.get("input_tokens") is not None or usage.get("output_tokens") is not None:
-            # Exact billed counts (cloud backends report these)
-            stats.append(
-                f"{usage.get('input_tokens', '?')} in / "
-                f"{usage.get('output_tokens', '?')} out tokens"
-            )
-            cost = estimate_cost(
-                endpoint["model"],
-                usage.get("input_tokens"),
-                usage.get("output_tokens"),
-            )
-            if cost is not None:
-                stats.append(f"~${cost:.4f} est.")
-        if stats:
-            st.caption(" · ".join(stats))
+        stats_line = format_stream_stats(
+            endpoint["model"], chunk_count, time.perf_counter() - start_time, usage
+        )
+        if stats_line:
+            stats_placeholder.caption(stats_line)
 
         return full_output, ""
 
@@ -534,8 +542,9 @@ def run_prompter(status_placeholder, messages: list[dict] | None = None) -> tupl
     step) instead of the default single-turn task rewrite."""
 
     # A local coder model left loaded by a chat or earlier run would fight the
-    # prompter for VRAM — evict it first. (No-op for a cloud coder.)
-    if st.session_state.get("last_model_role") == "coder":
+    # prompter for VRAM — evict it first. (No-op for a cloud coder, skipped
+    # entirely when the swap policy says both models fit.)
+    if st.session_state.get("last_model_role") == "coder" and swap_enabled(config):
         coder = get_role_endpoint(config, "coder")
         unload_model(coder["base_url"], coder["model"], coder["backend"])
     st.session_state["last_model_role"] = "prompter"
@@ -721,8 +730,9 @@ elif st.session_state["current_step"] == STEP_GENERATING:
 
         # Only swap if a local prompter actually ran since the last unload —
         # regenerating from the output page (or a cloud prompter) would
-        # otherwise trigger a pointless unload.
-        if st.session_state.pop("needs_swap", False):
+        # otherwise trigger a pointless unload. The 'never' swap policy
+        # (both models fit in VRAM) skips it too; the flag is still popped.
+        if st.session_state.pop("needs_swap", False) and swap_enabled(config):
             with status_placeholder.container():
                 render_pipeline_checklist([
                     {"label": "Prompt confirmed", "state": "done"},
@@ -803,6 +813,11 @@ elif st.session_state["current_step"] == STEP_GENERATING:
             st.session_state["coder_partial"] = result
             st.rerun()  # re-render into the stable error view below
         else:
+            # Keep the code this run replaced, so the output page can show a
+            # diff of what changed and offer a one-click revert.
+            prev_code = st.session_state.get("generated_code", "")
+            if prev_code and prev_code != result:
+                st.session_state.setdefault("code_versions", []).append(prev_code)
             st.session_state["generated_code"] = result
             st.session_state["coder_partial"] = ""
             st.session_state["coder_mode"] = "full"

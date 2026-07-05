@@ -32,6 +32,13 @@ def get_default_config() -> dict:
         # Free a resident local model's VRAM after this many idle minutes;
         # 0 = never. Applies to whichever role (prompter or coder) served last.
         "idle_unload_minutes": 5,
+        # 'auto' unloads one local model before running the other (single-GPU
+        # default); 'never' skips all cross-role unloads for machines whose
+        # VRAM fits both models at once.
+        "swap_policy": "auto",
+        # Named snapshots of a full pipeline setup (endpoints, sampling params,
+        # system prompts) that can be applied in one click from the task page.
+        "pipeline_profiles": {},
         "custom_presets": {},
         # Edits to built-in presets, keyed role -> category -> name -> text.
         # Kept separate so the shipped presets.json is never mutated.
@@ -114,6 +121,12 @@ def get_role_endpoint(config: dict, role: str) -> dict:
         "api_key": _resolve_api_key(config, backend),
     }
 
+def swap_enabled(config: dict) -> bool:
+    """False when the user opted out of VRAM swapping ('never' policy —
+    both models fit in VRAM, so cross-role unloads are pure overhead)."""
+    return config.get("swap_policy", "auto") != "never"
+
+
 def save_config(config: dict) -> None:
     """
     Save config dict to config.json.
@@ -125,6 +138,56 @@ def save_config(config: dict) -> None:
         json.dumps(config, indent=2, ensure_ascii=False),
         encoding="utf-8"
     )
+
+
+# ═══════════════════════════════════════════════════════
+#  Pipeline Profiles
+# ═══════════════════════════════════════════════════════
+
+# Config keys snapshotted into (and restored from) a pipeline profile —
+# everything that defines "which two models run and how", so switching e.g.
+# "local drafting" ↔ "cloud final pass" is one click instead of a Settings trip.
+PROFILE_CONFIG_KEYS = (
+    "prompter_backend", "prompter_base_url", "prompter_model",
+    "coder_backend", "coder_base_url", "coder_model",
+    "prompter_temperature", "coder_temperature",
+    "prompter_max_tokens", "coder_max_tokens",
+)
+
+
+def capture_pipeline_profile(config: dict, prompter_system: str, coder_system: str) -> dict:
+    """Snapshot the current endpoints/params plus the active system prompts."""
+    profile = {key: config.get(key) for key in PROFILE_CONFIG_KEYS}
+    profile["prompter_system"] = prompter_system
+    profile["coder_system"] = coder_system
+    return profile
+
+
+def apply_pipeline_profile(config: dict, profile: dict) -> dict:
+    """Write a profile's endpoint/param snapshot into the config and persist
+    it. System prompts are returned to the caller via the profile itself —
+    they live in session state, not config."""
+    for key in PROFILE_CONFIG_KEYS:
+        if profile.get(key) is not None:
+            config[key] = profile[key]
+    save_config(config)
+    return config
+
+
+def save_pipeline_profile(config: dict, name: str, profile: dict) -> dict:
+    """Create or overwrite a named pipeline profile."""
+    config.setdefault("pipeline_profiles", {})[name] = profile
+    save_config(config)
+    return config
+
+
+def delete_pipeline_profile(config: dict, name: str) -> dict:
+    """Remove a named pipeline profile (no-op if absent)."""
+    profiles = config.get("pipeline_profiles", {})
+    if name in profiles:
+        del profiles[name]
+        save_config(config)
+    return config
 
 
 # ═══════════════════════════════════════════════════════
