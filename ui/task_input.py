@@ -1,4 +1,5 @@
 import streamlit as st
+from core.api import rough_token_count
 from core.config import (
     get_merged_presets,
     save_custom_preset,
@@ -8,6 +9,11 @@ from core.config import (
     delete_pipeline_profile,
 )
 from core.suggest import suggest_presets
+
+# Headroom the Prompter needs beyond re-emitting the task itself (section
+# headers, requirements prose). Briefs that echo pasted code verbatim
+# (e.g. Bug Fix Brief) need roughly task-size + this much output budget.
+PROMPTER_OUTPUT_HEADROOM_TOKENS = 500
 
 # Default system prompts (fallbacks if presets fail to load). Kept in sync
 # with "Standard Prompt Engineer" / "Clean Code" in presets/presets.json.
@@ -289,6 +295,19 @@ def render_task_input():
     # ── Preset suggestion for the typed task ──
     if task and task.strip():
         _render_preset_suggestion(task, config)
+
+        # Output-budget guard: presets that must echo the task verbatim
+        # (Bug Fix Brief with pasted code) silently truncate when the
+        # Prompter's max output tokens can't fit task + brief structure.
+        est_task = rough_token_count(task)
+        max_out = config.get("prompter_max_tokens", 1024)
+        if est_task + PROMPTER_OUTPUT_HEADROOM_TOKENS > max_out:
+            st.warning(
+                f"Your task is ~{est_task:,} tokens, but the Prompter can "
+                f"output at most {max_out:,}. A brief that must reproduce "
+                "your pasted code (e.g. **Bug Fix Brief**) may get cut off — "
+                "raise *Prompter max tokens* in Settings before generating."
+            )
 
     # ── Named pipeline profiles (apply / save / delete) ──
     _render_pipeline_profiles(config)

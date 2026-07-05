@@ -252,6 +252,30 @@ class TestTaskInputPage(AppSmokeTestCase):
         # The toggle widget registers its key in session state
         self.assertIn("quick_mode", at.session_state)
 
+    def test_oversized_task_warns_about_prompter_budget(self):
+        # A task bigger than the Prompter's output budget (e.g. pasted code
+        # for Bug Fix Brief) must surface the truncation warning.
+        at = self._run_app()
+        at.session_state["page"] = "pipeline"
+        at.run()
+        big_task = "fix this bug\n" + ("x = compute(1)\n" * 600)
+        at.text_area(key="task_input_area").set_value(big_task)
+        at.run()
+        self.assertFalse(at.exception)
+        self.assertTrue(
+            any("Prompter can output at most" in w.value for w in at.warning)
+        )
+
+    def test_small_task_has_no_budget_warning(self):
+        at = self._run_app()
+        at.session_state["page"] = "pipeline"
+        at.run()
+        at.text_area(key="task_input_area").set_value("a snake game in the browser")
+        at.run()
+        self.assertFalse(
+            any("Prompter can output at most" in w.value for w in at.warning)
+        )
+
     def test_preset_suggestion_appears_for_matching_task(self):
         at = self._run_app()
         at.session_state["page"] = "pipeline"
