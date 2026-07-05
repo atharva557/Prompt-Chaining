@@ -32,12 +32,13 @@ Each role has its own backend, so you can keep the Prompter local and point the 
                    ▼
 ┌──────────────────────────────────────────────────────┐
 │  2. Prompter Model (small / fast)                    │
-│     e.g. Phi-4 Mini · ~4 GB VRAM                     │
+│     e.g. Gemma 4 4B · ~3 GB VRAM                     │
 │     Rewrites your idea into a detailed prompt        │
 └──────────────────┬───────────────────────────────────┘
                    ▼
 ┌──────────────────────────────────────────────────────┐
-│  3. You review, edit, or retry the generated prompt  │
+│  3. You review, edit, revise, or retry the prompt    │
+│     (or skip this step entirely with Quick mode)     │
 └──────────────────┬───────────────────────────────────┘
                    ▼
 ┌──────────────────────────────────────────────────────┐
@@ -52,29 +53,35 @@ Each role has its own backend, so you can keep the Prompter local and point the 
 └──────────────────┬───────────────────────────────────┘
                    ▼
 ┌──────────────────────────────────────────────────────┐
-│  6. Code streams to screen → saved to file           │
+│  6. Code streams in → per-file tabs → save/download  │
+│     Refine in place, diff every version, revert      │
 └──────────────────────────────────────────────────────┘
 ```
 
-The free local **review gate** at step 3 is the trick behind the hybrid mode: you fix the prompt on a local model for free, so the one expensive cloud generation lands right more often and you re-roll far less.
+The free local **review gate** at step 3 is the trick behind the hybrid mode: you fix the prompt on a local model for free, so the one expensive cloud generation lands right more often and you re-roll far less. After generation, a **refine loop** edits the code in place — every version diffed against the previous one and revertible in a click.
 
 ## 🎯 Features
 
 |    | Feature                          | Details                                                                                                                                 |
 | --- | -------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
-| 🔗  | **Two-model pipeline**           | Prompter → review / edit → Coder                                                                                                        |
-| 📡  | **Real-time streaming**          | Token-by-token output via SSE, with tokens/sec stats                                                                                    |
-| 🧠  | **VRAM-aware model swapping**    | Automatically unloads the Prompter before loading the Coder                                                                             |
+| 🔗  | **Two-model pipeline**           | Prompter → review / edit / revise → Coder, with a **Quick mode** that skips the review step entirely                                    |
+| 📡  | **Real-time streaming**          | Token-by-token SSE with live tokens/sec while it runs; exact billed tokens + a cost estimate for cloud generations                      |
+| 🤔  | **Reasoning models welcome**     | `<think>` blocks and reasoning deltas (Qwen3 / DeepSeek-R1 style) stream into a collapsed panel — never into your prompt or code        |
+| 🧠  | **VRAM-aware model swapping**    | Unloads one local model before the other runs; set the policy to *never* if your GPU fits both, and idle models auto-unload after N min |
 | 🔌  | **Per-role backends**            | Mix local and cloud: LM Studio, Ollama, any OpenAI-compatible server, plus OpenAI, Claude, and Gemini — chosen separately for each role |
 | 💸  | **Local Prompter + cloud Coder** | Refine prompts for free on a local model, then send one clean prompt to a frontier cloud Coder — fewer wasted paid generations          |
-| 🔍  | **Auto model detection**         | Installed models are detected and listed automatically                                                                                  |
-| 🕘  | **Run history**                  | Past runs persist across restarts; reopen or delete them from the sidebar                                                               |
+| 🎛️ | **Pipeline profiles**            | Save the whole setup (backends, models, temperatures, system prompts) under a name and switch setups in one click                       |
+| 🗂️ | **Multi-file output**            | Several fenced blocks render as per-file tabs, with a zip download and save-all into a timestamped folder; single files get auto language detection and suggested filenames |
+| ⏪  | **Version history**              | Every refine/regenerate is diffed against the previous code — revert with one click                                                     |
 | ♻️ | **Refine in place**              | Send a follow-up instruction ("make the board bigger") to edit the code without regenerating from scratch                               |
-| 💬  | **Direct chats**                 | ChatGPT-style pages for just the Prompter or just the Coder when you don't need the full pipeline                                       |
+| 🛡️ | **Context guards**               | Warns before a refine payload outgrows a small local context window, or a pasted-code task outgrows the Prompter's output budget        |
+| 💡  | **Preset auto-suggestion**       | Task keywords suggest a matching Prompter + Coder preset pair, applied in one click                                                     |
 | 📋  | **46 built-in presets**          | Across General, Web Development, Data & Scripts, Games & Graphics, Systems & CLI, Testing, Debug & Refactor, Languages, and Machine Learning |
 | ✏️ | **Presets manager**              | Browse and edit every preset; edits to built-ins are saved as overrides (reset to default anytime), plus create/delete your own         |
-| 🗂️ | **Smart file output**            | Auto language detection, suggested filenames, timestamped saves, browser download                                                       |
-| 🌙  | **Polished dark UI**             | Clean Tokyo Night theme; tokens/sec for local runs and exact tokens + a cost estimate for cloud                                         |
+| 💬  | **Direct chats**                 | ChatGPT-style pages for just the Prompter or just the Coder; conversations persist across restarts, and any chat-drafted prompt can jump straight into the pipeline |
+| 🕘  | **Run history**                  | Past runs persist across restarts; reopen or delete them from the sidebar                                                               |
+| 🔍  | **Auto model detection**         | Installed models are detected and listed automatically                                                                                  |
+| 🌙  | **Polished dark UI**             | Clean Tokyo Night theme                                                                                                                 |
 
 ## 📦 Requirements
 
@@ -134,9 +141,10 @@ Each role (Prompter / Coder) is configured independently in **Settings**:
 | Base URL (per role)    | per-backend   | Editable for local/custom backends; fixed for cloud providers                                                                  |
 | Model (per role)       | —             | Auto-detected from the server, or entered manually                                                                             |
 | Temperature (per role) | 0.3 / 0.1     | Lower = more deterministic                                                                                                     |
-| Max Tokens (per role)  | 1024 / 4096   | Max output length                                                                                                              |
-| Output Folder          | `./output`    | Where generated code files are saved                                                                                           |
-| Auto-unload coder      | 5 min         | Free local VRAM after the coder sits idle this long (`0` = never; local backends only)                                         |
+| Max tokens (per role)  | 1024 / 4096   | Max output length — the task page warns when a pasted-code task won't fit the Prompter's budget                                |
+| Output folder          | `./output`    | Where generated code is saved; multi-file runs get a timestamped subfolder                                                     |
+| Idle auto-unload       | 5 min         | Free local VRAM when the resident model (either role) sits idle this long (`0` = never; local backends only)                   |
+| VRAM swap policy       | auto          | *Auto* unloads one model before running the other; pick *never* if your GPU holds both — skips every unload/reload cycle       |
 
 **API keys** for the cloud backends are read from environment variables first — `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY` — and fall back to keys entered in Settings. Settings (including any typed-in keys) persist in `config.json` (git-ignored).
 
@@ -146,10 +154,11 @@ Each role (Prompter / Coder) is configured independently in **Settings**:
 
 ### Prompter (small / fast)
 
-| Model                | VRAM  | Notes                              |
-| -------------------- | ----- | ---------------------------------- |
-| Phi-4 Mini Reasoning | ~4 GB | Fast, great at reformulating tasks |
-| Qwen 2.5 3B          | ~3 GB | Lightweight alternative            |
+| Model                | VRAM  | Notes                                                        |
+| -------------------- | ----- | ------------------------------------------------------------ |
+| Gemma 4 4B           | ~3 GB | Fast and precise at reformulating tasks — the sweet spot     |
+| Phi-4 Mini Reasoning | ~4 GB | Reasoning-tuned alternative                                  |
+| Qwen 2.5 3B          | ~3 GB | Lightweight alternative                                      |
 
 ### Coder (larger / code-focused)
 
@@ -159,7 +168,7 @@ Each role (Prompter / Coder) is configured independently in **Settings**:
 | DeepSeek Coder V2 Lite | ~9 GB  | Strong alternative              |
 | Qwen 2.5 Coder 7B      | ~5 GB  | Good choice for 8 GB VRAM cards |
 
-> **Tip:** Pair a ~3–4 GB Prompter with the largest Coder that fits in your remaining VRAM for the best results.
+> **Tips:** Pair a ~3–4 GB Prompter with the largest Coder that fits in your remaining VRAM. Thinking models (Qwen3, DeepSeek-R1 distills) work out of the box — their reasoning streams into a separate collapsed panel and never leaks into the prompt or code.
 
 ## 🗂️ Project Structure
 
@@ -170,21 +179,23 @@ promptchain/
 ├── run.bat / run.command / run.sh   # Double-click launchers (Windows / macOS / Linux)
 ├── core/
 │   ├── api.py               # Backend API calls, model unload, cost estimates
-│   ├── config.py            # Config & preset management
+│   ├── config.py            # Config, presets & pipeline profiles
 │   ├── history.py           # Persistent run history (history.json)
-│   └── streaming.py         # Real-time SSE / SDK token streaming
+│   ├── chats.py             # Persistent chat conversations (chats.json)
+│   ├── suggest.py           # Keyword rules → suggested preset pair
+│   └── streaming.py         # Real-time SSE / SDK token streaming + think-block filtering
 ├── ui/
 │   ├── styles.py            # Dark theme CSS + UI components
 │   ├── landing.py           # Landing page
 │   ├── settings.py          # Settings page (auto model detection)
-│   ├── task_input.py        # Task input + preset selector
-│   ├── prompt_review.py     # Prompt review / edit step
-│   ├── code_output.py       # Side-by-side prompt/code, save & download
+│   ├── task_input.py        # Task input, presets, profiles
+│   ├── prompt_review.py     # Prompt review / edit / revise step
+│   ├── code_output.py       # Output page: file tabs, versions, refine, save & download
 │   ├── chat.py              # Direct Prompter / Coder chat pages
 │   └── presets.py           # Presets manager
 ├── presets/
-│   └── presets.json         # 37 built-in system prompt presets
-├── tests/                   # Pytest suite for the core helpers
+│   └── presets.json         # 46 built-in system prompt presets
+├── tests/                   # Pytest suite (144 tests)
 ├── .streamlit/
 │   └── config.toml          # Streamlit theme configuration
 ├── requirements.txt         # Runtime deps (+ requirements-dev.txt for tests)
