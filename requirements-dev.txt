@@ -1,5 +1,7 @@
--r requirements.txt
-pytest>=8.0.0
-# Used directly by tests/test_streaming.py to build real Anthropic SDK error
-# objects (already a transitive dependency of the anthropic package).
-httpx>=0.27.0
+# Editable-install the promptchain package with every extra the tests need:
+#   app       -> streamlit (tests/test_app_smoke.py drives the app via AppTest)
+#   anthropic -> anthropic SDK (tests/test_streaming.py builds real SDK errors)
+#   dev       -> pytest + httpx
+#   mcp       -> the MCP SDK (tests/test_mcp_server.py drives the stdio server)
+# Also pulls the package's own deps (requests, platformdirs, tomli on <3.11).
+-e .[app,anthropic,dev,mcp]
