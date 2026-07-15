@@ -1,9 +1,11 @@
 """Backend registry and URL construction.
 
-Every other module keys its behavior off the backend string. Local backends
-(``lmstudio``, ``ollama``, ``custom``) speak the OpenAI-compatible HTTP API of
-a server the user runs; cloud backends (``openai``, ``gemini``) are also
-OpenAI-compatible, while ``anthropic`` goes through the official SDK.
+Every other module keys its behavior off the backend string. ``lmstudio``,
+``ollama``, and ``custom`` speak the OpenAI-compatible HTTP API of a server the
+user runs; ``custom`` also reaches OpenAI-compatible *clouds* (DeepSeek, Groq,
+Together, OpenRouter, …) when you point ``base_url`` at them and pass an
+``api_key``. The named cloud backends (``openai``, ``gemini``) are OpenAI-
+compatible too, while ``anthropic`` goes through the official SDK.
 """
 
 DEFAULT_TIMEOUT = 15  # seconds for non-generation requests
@@ -14,7 +16,9 @@ BACKEND_DEFAULTS = {
     "lmstudio": "http://localhost:1234",
     "ollama": "http://localhost:11434",
     # llama.cpp server's default port; also covers llama-swap, vLLM, Jan,
-    # KoboldCpp, TabbyAPI — anything speaking the OpenAI API
+    # KoboldCpp, TabbyAPI — anything speaking the OpenAI API. Override base_url
+    # (and pass api_key) to reach an OpenAI-compatible *cloud*: DeepSeek, Groq,
+    # Together, Fireworks, OpenRouter, Mistral, DeepInfra, ...
     "custom": "http://localhost:8080",
     "openai": "https://api.openai.com",
     "anthropic": "https://api.anthropic.com",
@@ -25,7 +29,7 @@ BACKEND_DEFAULTS = {
 BACKEND_LABELS = {
     "lmstudio": "LM Studio",
     "ollama": "Ollama",
-    "custom": "Custom (OpenAI-compatible)",
+    "custom": "Custom (OpenAI-compatible, local or cloud)",
     "openai": "OpenAI",
     "anthropic": "Anthropic (Claude)",
     "gemini": "Google Gemini",
@@ -77,8 +81,15 @@ def models_url(base_url: str, backend: str) -> str:
 
 
 def auth_headers(backend: str, api_key: str) -> dict:
-    """Bearer auth for cloud backends with a key; empty otherwise."""
-    if api_key and is_cloud(backend):
+    """Bearer ``Authorization`` header whenever an API key is provided.
+
+    Covers the named clouds (OpenAI/Gemini) *and* any OpenAI-compatible
+    provider reached through the ``custom`` backend — DeepSeek, Groq, Together,
+    Fireworks, OpenRouter, Mistral, DeepInfra, an authenticated vLLM, and so
+    on. Local servers (LM Studio, Ollama, llama.cpp) normally pass no key, so
+    they get no header and are unaffected.
+    """
+    if api_key:
         return {"Authorization": f"Bearer {api_key}"}
     return {}
 

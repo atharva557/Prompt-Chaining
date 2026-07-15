@@ -4,9 +4,9 @@ build-backend = "hatchling.build"
 
 [project]
 name = "promptchain"
-version = "0.1.0.dev0"
+version = "0.1.0"
 description = "Load, unload, and swap any number of local LLMs (LM Studio, Ollama, llama.cpp, ...) with full client-side control — plus unified streaming for local and cloud backends and an MCP server so agents can manage your VRAM."
-readme = "README.md"
+readme = "README-pypi.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
 authors = [{ name = "Atharva Shah", email = "atharvashah777@gmail.com" }]
@@ -46,6 +46,17 @@ Homepage = "https://github.com/atharva557/Prompt-Chaining"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/promptchain"]
+
+# The sdist is a monorepo, so scope the source archive to just the library —
+# without this it sweeps in the Streamlit app, tests, and internal docs.
+[tool.hatch.build.targets.sdist]
+include = [
+    "/src/promptchain",
+    "/examples",
+    "/README-pypi.md",
+    "/LICENSE",
+    "/pyproject.toml",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

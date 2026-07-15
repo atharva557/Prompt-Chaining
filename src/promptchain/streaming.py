@@ -401,8 +401,11 @@ def _stream_openai_compatible(
         payload["max_completion_tokens"] = max_tokens
     else:
         payload["max_tokens"] = max_tokens
-    # Cloud backends report token usage in a trailing chunk when asked
-    if is_cloud(backend):
+    # Metered backends report token usage in a trailing chunk when asked: the
+    # named clouds, plus any keyed OpenAI-compatible provider via `custom`
+    # (DeepSeek, Groq, ...). Local keyless servers skip it — some minimal
+    # servers choke on stream_options.
+    if is_cloud(backend) or api_key:
         payload["stream_options"] = {"include_usage": True}
     if tools:
         payload["tools"] = tools
