@@ -97,7 +97,11 @@ promptchain-mcp        # stdio MCP server
 
 Wire it into Hermes Agent, Claude Code, or Claude Desktop and it can `ps` your GPU, `load`/`unload`/`swap` models, and `generate` through them — in plain language. Models are configured in an `endpoints.toml` (auto-created on first run). See the [agent setup guide](https://github.com/atharva557/Prompt-Chaining/blob/master/examples/agent_mcp_setup.md).
 
+## The app built on this
+
+The same repo ships the **PromptChain app** — a two-model Streamlit pipeline with a *human review gate*: a small local model drafts your prompt, you fix it, then the big (local or cloud) model writes the code. It's the flagship consumer of this library; clone the repo to run it.
+
 ## Links
 
-- **Source, examples, and full docs:** https://github.com/atharva557/Prompt-Chaining
+- **Source, the app, examples, and full docs:** https://github.com/atharva557/Prompt-Chaining
 - Requires Python ≥ 3.10. MIT licensed.

@@ -138,9 +138,10 @@ def inject_custom_css():
         border-color: var(--pc-border-strong) !important;
     }
 
-    .stSlider > div > div > div > div {
-        background: var(--pc-accent) !important;
-    }
+    /* Sliders are themed natively via [theme] primaryColor in
+       .streamlit/config.toml (same #7aa2f7 as --pc-accent). Do NOT re-color
+       them with a nested-div selector: it repaints the whole track solid and
+       kills the filled-vs-unfilled gradient. */
 
     /* ── Expanders ── */
     [data-testid="stExpander"] {
