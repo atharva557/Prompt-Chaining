@@ -1,5 +1,3 @@
-streamlit>=1.35.0
-requests>=2.31.0
-# Only needed for the Anthropic (Claude) backend; lazily imported, so
-# local-only installs can skip it.
-anthropic>=0.40.0
+# The PromptChain app runs on top of the promptchain library (src/promptchain).
+# Editable-install the package with the app UI + Anthropic backend extras:
+-e .[app,anthropic]

@@ -16,8 +16,8 @@ from unittest import mock
 import anthropic
 import httpx
 
-import core.streaming as streaming
-from core.streaming import ThinkTagFilter
+import promptchain.streaming as streaming
+from promptchain.streaming import ThinkTagFilter
 
 
 def _bad_request(message: str) -> anthropic.BadRequestError:

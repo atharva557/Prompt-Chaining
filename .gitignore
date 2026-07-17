@@ -10,4 +10,4 @@ dist/
 build/
 .venv/
 venv/
-
+.examples/

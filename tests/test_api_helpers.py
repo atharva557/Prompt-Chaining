@@ -71,8 +71,14 @@ class TestAuthHeaders(unittest.TestCase):
             {"Authorization": "Bearer sk-abc"},
         )
 
-    def test_no_header_for_local(self):
-        self.assertEqual(api._auth_headers("lmstudio", "sk-abc"), {})
+    def test_bearer_for_any_keyed_backend(self):
+        # Keys ride along whenever provided — that's how OpenAI-compatible
+        # clouds (DeepSeek, Groq, ...) work through the `custom` backend.
+        # Keyless local servers (the normal case) still get no header.
+        self.assertEqual(
+            api._auth_headers("lmstudio", "sk-abc"),
+            {"Authorization": "Bearer sk-abc"},
+        )
 
     def test_no_header_without_key(self):
         self.assertEqual(api._auth_headers("openai", ""), {})
@@ -126,7 +132,7 @@ class TestScheduleUnload(unittest.TestCase):
         )
         MockTimer.return_value.start.assert_called_once()
 
-    @mock.patch("core.api.unload_model")
+    @mock.patch("promptchain.lifecycle.unload_model")
     def test_fire_unload_unloads_and_sets_flag(self, mock_unload):
         api._fire_unload("http://localhost:1234", "m", "lmstudio")
         mock_unload.assert_called_once_with("http://localhost:1234", "m", "lmstudio")
