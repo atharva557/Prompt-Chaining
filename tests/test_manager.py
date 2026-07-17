@@ -384,6 +384,70 @@ class TestStatsAndHooks(ManagerTestCase):
         self.assertEqual(self.unload_mock.call_count, 2)
 
 
+class TestFailedUnload(ManagerTestCase):
+    """A failed unload (server unreachable) must NOT be recorded as an
+    eviction — clearing residency on failure would let _needs_room
+    over-commit the GPU, the exact OOM the manager exists to prevent."""
+
+    def test_failed_unload_keeps_residency(self):
+        mgr = ModelManager(policy="auto")
+        mgr.register("a", Endpoint("lmstudio", "model-a"))
+        evicted = []
+        mgr.on_evict(lambda *args: evicted.append(args))
+        with mgr.use("a"):
+            pass
+        self.unload_mock.return_value = False  # unload request fails
+        self.assertFalse(mgr.unload("a"))
+        self.assertEqual(mgr.resident(), ["a"])  # belief unchanged
+        self.assertEqual(evicted, [])
+        self.assertEqual(mgr.stats()["a"]["unloads"], 0)
+
+    def test_make_room_skips_unevictable_victim_without_looping(self):
+        mgr = ModelManager(policy="auto", max_resident=1)
+        mgr.register("a", Endpoint("lmstudio", "model-a"))
+        mgr.register("b", Endpoint("lmstudio", "model-b"))
+        with mgr.use("a"):
+            pass
+        self.unload_mock.return_value = False  # eviction of 'a' fails
+        self.assertTrue(mgr.load("b"))  # proceeds best-effort, no infinite loop
+        self.assertEqual(sorted(mgr.resident()), ["a", "b"])
+
+
+class TestCustomCloudSafety(ManagerTestCase):
+    def test_load_never_pings_custom_endpoints(self):
+        """A keyed `custom` endpoint is likely a paid OpenAI-compatible cloud
+        (DeepSeek, Groq, ...) — load()/preload() must never fire a JIT
+        completion at it."""
+        mgr = ModelManager(policy="auto")
+        mgr.register("deepseek", Endpoint(
+            "custom", "deepseek-chat",
+            base_url="https://api.deepseek.com", api_key="sk-x",
+        ))
+        self.assertFalse(mgr.load("deepseek"))
+        thread = mgr.preload("deepseek")
+        thread.join(timeout=5)
+        self.load_mock.assert_not_called()
+
+
+class TestStatsAccuracy(ManagerTestCase):
+    def test_loads_counts_transitions_not_calls(self):
+        mgr = ModelManager(policy="auto")
+        mgr.register("a", Endpoint("lmstudio", "model-a"))
+        mgr.load("a")
+        mgr.load("a")
+        mgr.load("a")
+        self.assertEqual(mgr.stats()["a"]["loads"], 1)
+
+    def test_unloads_counts_transitions_not_attempts(self):
+        mgr = ModelManager(policy="auto")
+        mgr.register("a", Endpoint("lmstudio", "model-a"))
+        mgr.unload("a")  # was never resident — attempt, not a transition
+        self.assertEqual(mgr.stats()["a"]["unloads"], 0)
+        mgr.load("a")
+        mgr.unload("a")
+        self.assertEqual(mgr.stats()["a"]["unloads"], 1)
+
+
 class TestPreload(ManagerTestCase):
     def test_preload_runs_in_background(self):
         mgr = ModelManager(policy="auto")

@@ -155,6 +155,33 @@ class TestLoadModel(unittest.TestCase):
             self.assertFalse(lifecycle.load_model("https://x", "m", "openai"))
         post.assert_not_called()
 
+    def test_custom_jit_load_sends_auth_header(self):
+        """Authenticated OpenAI-compatible servers (vLLM --api-key,
+        llama-swap behind a proxy) need the key on the JIT load."""
+        posts = []
+
+        def fake_post(url, **kw):
+            posts.append(kw)
+            return _response(200)
+
+        with mock.patch("promptchain.lifecycle.requests.post", side_effect=fake_post):
+            ok = lifecycle.load_model(
+                "http://localhost:8080", "m", "custom", api_key="sk-auth"
+            )
+        self.assertTrue(ok)
+        self.assertEqual(posts[0]["headers"]["Authorization"], "Bearer sk-auth")
+
+    def test_keyless_jit_load_has_no_auth_header(self):
+        posts = []
+
+        def fake_post(url, **kw):
+            posts.append(kw)
+            return _response(200)
+
+        with mock.patch("promptchain.lifecycle.requests.post", side_effect=fake_post):
+            lifecycle.load_model("http://localhost:8080", "m", "custom")
+        self.assertNotIn("Authorization", posts[0]["headers"])
+
 
 class TestUnloadModel(unittest.TestCase):
     def test_lmstudio_unloads_every_instance(self):

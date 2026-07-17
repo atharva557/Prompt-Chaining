@@ -57,18 +57,25 @@ class ThinkTagFilter:
     untouched. Tags split across chunk boundaries are handled by buffering.
     The hidden reasoning accumulates in ``.reasoning``; call ``flush()`` once
     the stream ends to release any still-buffered text.
+
+    Some R1-style chat templates put the opening ``<think>`` in the *prompt*,
+    so the model's output starts already inside the block and only a bare
+    ``</think>`` ever appears. Pass ``assume_open=True`` for those templates:
+    everything before the first ``</think>`` is then treated as reasoning.
+    (This can't be auto-detected without buffering the whole stream — a bare
+    closer looks like ordinary text until it arrives.)
     """
 
     OPEN = "<think>"
     CLOSE = "</think>"
 
-    def __init__(self):
+    def __init__(self, assume_open: bool = False):
         self.reasoning = ""
         self._buf = ""
         # 'start' → deciding whether the output opens with <think>;
         # 'think' → inside the block; 'lead' → skipping whitespace after it;
         # 'pass'  → verbatim passthrough for the rest of the stream.
-        self._state = "start"
+        self._state = "think" if assume_open else "start"
 
     def feed(self, text: str) -> str:
         """Consume one streamed chunk, return the visible part (may be '')."""
@@ -249,8 +256,8 @@ class StreamingResponse:
 
 
 def stream(
-    base_url: str,
-    model: str,
+    base_url: str = "",
+    model: str = "",
     system_prompt: str = "",
     user_message: str = "",
     temperature: float = 0.3,
@@ -262,6 +269,7 @@ def stream(
     tools: list[dict] | None = None,
     tool_choice=None,
     parse_tool_calls: bool | None = None,
+    assume_reasoning: bool = False,
 ) -> StreamingResponse:
     """High-level streaming call returning a :class:`StreamingResponse`.
 
@@ -292,13 +300,14 @@ def stream(
         tool_choice=tool_choice,
         tool_calls_out=tool_calls if (parse_tool_calls or tools is not None) else None,
         parse_tool_calls=parse_tool_calls,
+        assume_reasoning=assume_reasoning,
     )
     return StreamingResponse(generator, usage, reasoning, tool_calls, model)
 
 
 def stream_completion(
-    base_url: str,
-    model: str,
+    base_url: str = "",
+    model: str = "",
     system_prompt: str = "",
     user_message: str = "",
     temperature: float = 0.3,
@@ -313,6 +322,7 @@ def stream_completion(
     tool_choice=None,
     tool_calls_out: list | None = None,
     parse_tool_calls: bool | None = None,
+    assume_reasoning: bool = False,
 ) -> Generator[str, None, None]:
     """
     Generator that yields text tokens as they arrive.
@@ -364,6 +374,7 @@ def stream_completion(
             base_url, model, messages, temperature, max_tokens,
             backend, timeout, api_key, usage_out, reasoning_out,
             tools, tool_choice, tool_calls_out, parse_tool_calls,
+            assume_reasoning,
         )
 
 
@@ -388,6 +399,7 @@ def _stream_openai_compatible(
     base_url, model, messages, temperature, max_tokens,
     backend, timeout, api_key, usage_out, reasoning_out=None,
     tools=None, tool_choice=None, tool_calls_out=None, parse_tool_calls=None,
+    assume_reasoning=False,
 ) -> Generator[str, None, None]:
     """SSE streaming for local servers and OpenAI/Gemini clouds."""
     payload = {
@@ -417,7 +429,7 @@ def _stream_openai_compatible(
     # Reasoning models hide their thinking either inline (<think> tags in
     # content) or in a separate delta field; both are collected here and kept
     # out of the visible token stream.
-    think_filter = ThinkTagFilter()
+    think_filter = ThinkTagFilter(assume_open=assume_reasoning)
     field_reasoning = ""
 
     # Tool calls arrive either as structured deltas (servers with a parser)

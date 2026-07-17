@@ -15,6 +15,7 @@ import requests
 
 from .backends import (
     DEFAULT_TIMEOUT,
+    auth_headers,
     chat_completions_url,
     is_cloud,
     is_managed,
@@ -135,6 +136,7 @@ def load_model(
     backend: str = "lmstudio",
     timeout: float = LOAD_TIMEOUT,
     keep_alive=None,
+    api_key: str = "",
 ) -> bool:
     """
     Best-effort explicit model load (pre-warming). Never raises. Returns True
@@ -186,13 +188,19 @@ def load_model(
 
         # Universal fallback: a 1-token completion JIT-loads the model.
         # A real token, not "" — empty content breaks some chat templates.
+        # `api_key` rides along for authenticated servers (vLLM with
+        # --api-key, llama-swap behind a proxy, ...).
         payload = {
             "model": model_id,
             "messages": [{"role": "user", "content": "ping"}],
             "max_tokens": 1,
         }
         resp = requests.post(
-            chat_completions_url(base_url, backend), json=payload, timeout=timeout
+            chat_completions_url(base_url, backend),
+            json=payload,
+            headers={"Content-Type": "application/json",
+                     **auth_headers(backend, api_key)},
+            timeout=timeout,
         )
         return resp.status_code == 200
     except Exception:

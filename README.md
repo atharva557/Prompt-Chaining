@@ -27,9 +27,9 @@ This repo is **two things, one stack**:
 
 ## 📦 The library: your GPU, your rules — even for your agent
 
-**Honest context first:** if all you want is "call model A, then model B, and have them swap automatically," you don't need this — LM Studio's JIT + auto-evict does that by default, Ollama's `keep_alive` handles itself, and [llama-swap](https://github.com/mostlygeek/llama-swap) proxies it. Those are *heuristics the server applies to you*.
+**Honest context first:** if all you want is "call model A, then model B, and have them swap automatically," you don't need this — LM Studio's JIT + auto-evict does it by default and Ollama's `keep_alive` manages itself. [llama-swap](https://github.com/mostlygeek/llama-swap) goes further with explicit unload endpoints, `/running`, and groups — for the llama.cpp-style servers it proxies. Single-backend MCP servers exist too ([vram-mcp](https://glama.ai/mcp/servers/sushiHex/vram-mcp) for Ollama, [lmstudio-mcp](https://github.com/seajhawk/lmstudio-mcp) for LM Studio).
 
-`promptchain` is for when you need to **decide yourself** — or want **your agent to decide**:
+What `promptchain` adds is the combination none of them ship: **one client — and one MCP server — that spans LM Studio + Ollama + any OpenAI-compatible endpoint, with a policy engine instead of raw load/unload calls**:
 
 - **`ps` across servers** — one view of what's resident on Ollama *and* LM Studio, with VRAM
 - **Pin** a model so it's never evicted · **preload** the next one before you need it
@@ -49,7 +49,7 @@ with mgr.use("coder") as m:                     # drafter is evicted first if ne
         print(tok, end="", flush=True)
 ```
 
-### 🤖 The part nobody else does: agents managing their own GPU
+### 🤖 The wedge: your agent manages its own GPU — across every backend
 
 As coding agents get pointed at local models, someone has to decide what's worth keeping in VRAM — and today that's either a server heuristic or you, alt-tabbing. `promptchain-mcp` gives the **agent** the tools instead:
 

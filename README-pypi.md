@@ -2,7 +2,7 @@
 
 **Load, unload, and swap any number of local LLMs on one GPU — with full, explicit control.** A small library for driving LM Studio, Ollama, and any OpenAI-compatible server from Python, plus unified streaming across local *and* cloud backends, and an MCP server so agents can manage your VRAM for you.
 
-Ollama's `keep_alive`, LM Studio's TTL eviction, and llama-swap all decide *for you* when a model loads or unloads. `promptchain` is the opposite: **you** decide. Pin a model so it's never evicted, pre-warm the next one before you need it, swap a whole working set in one call, or cap residency by count or VRAM budget.
+Servers already handle the *automatic* case — LM Studio auto-evicts, Ollama's `keep_alive` expires, llama-swap proxies swapping for the servers it manages. What none of them give you is **one client that spans LM Studio + Ollama + any OpenAI-compatible endpoint with a policy engine on top**: pin a model so it's never evicted, pre-warm the next one before you need it, swap a whole working set in one call, cap residency by count or VRAM budget — and hand all of that to your agent over MCP.
 
 ```bash
 pip install promptchain

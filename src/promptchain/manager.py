@@ -217,23 +217,31 @@ class ModelManager:
              timeout: float = lifecycle.LOAD_TIMEOUT) -> bool:
         """Explicitly load (pre-warm) a model. Under auto policy this evicts
         others first as needed; under manual policy it loads exactly this
-        model and nothing else changes. No-op (False) for cloud backends."""
+        model and nothing else changes. No-op (False) for cloud and `custom`
+        backends — only LM Studio/Ollama expose a lifecycle to drive."""
         reg = self._get(name)
         ep = reg.endpoint
-        if not ep.is_local:
+        if not ep.is_managed:
+            # Cloud: nothing to load. Custom: no lifecycle API — and a keyed
+            # custom endpoint is very likely a *paid* OpenAI-compatible cloud,
+            # so never fire a JIT ping at it. (Deliberate JIT warming of e.g.
+            # llama-swap is still available via lifecycle.load_model(...,
+            # api_key=...).)
             return False
-        if self.policy == "auto" and ep.is_managed:
+        if self.policy == "auto":
             self._make_room(name)
         with reg.request_lock:
             ok = lifecycle.load_model(ep.base_url, ep.model, ep.backend, timeout=timeout)
-            if ok and wait and ep.is_managed:
+            if ok and wait:
                 self._wait_for_residency(ep)
+            was_resident = False
             with self._lock:
                 if ok:
                     was_resident = reg.resident
                     reg.resident = True
                     reg.last_used = time.monotonic()
-                    reg.stats["loads"] += 1
+                    if not was_resident:
+                        reg.stats["loads"] += 1
             if ok and not was_resident:
                 self._emit(self._on_load, name)
         return ok
@@ -383,23 +391,33 @@ class ModelManager:
             if victim_reg.request_lock.acquire(timeout=0.1):
                 try:
                     self._cancel_timer(victim_reg)
-                    self._do_unload(victim, victim_reg, reason="evicted")
+                    if not self._do_unload(victim, victim_reg, reason="evicted"):
+                        # Unload failed — the victim stays resident, so it
+                        # must not be re-picked or this loop would never end.
+                        skipped.add(victim)
                 finally:
                     victim_reg.request_lock.release()
             else:
                 skipped.add(victim)
 
     def _do_unload(self, name: str, reg: _Registration, reason: str) -> bool:
-        """Caller holds reg.request_lock."""
+        """Caller holds reg.request_lock. Only a *successful* unload updates
+        belief: if the request failed (server unreachable), the model is very
+        likely still occupying VRAM, so residency must not be cleared — that
+        would let _needs_room over-commit the GPU. refresh_residency()
+        reconciles once the server is reachable again."""
         ep = reg.endpoint
         ok = lifecycle.unload_model(ep.base_url, ep.model, ep.backend)
+        if not ok:
+            return False
         with self._lock:
             was_resident = reg.resident
             reg.resident = False
-            reg.stats["unloads"] += 1
+            if was_resident:
+                reg.stats["unloads"] += 1
         if was_resident:
             self._emit(self._on_evict, name, reason)
-        return ok
+        return True
 
     # ── Idle timers (one per model) ──────────────────────────────────────
 

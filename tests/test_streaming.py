@@ -146,6 +146,30 @@ class TestThinkTagFilter(unittest.TestCase):
         self.assertEqual(visible, "")
         self.assertEqual(reasoning, "never ends")
 
+    def test_bare_closer_passes_through_by_default(self):
+        # Without assume_open the filter cannot know a lone </think> is a
+        # reasoning terminator until it arrives — documented limitation.
+        visible, reasoning = self._run_filter(["no opener </think> here"])
+        self.assertEqual(visible, "no opener </think> here")
+        self.assertEqual(reasoning, "")
+
+    def test_assume_open_captures_bare_closing_tag(self):
+        # R1-style templates put <think> in the prompt: output starts inside
+        # the block and only the closing tag appears.
+        f = ThinkTagFilter(assume_open=True)
+        visible = "".join(
+            f.feed(c) for c in ["Let me think. </th", "ink>The answer is 4."]
+        )
+        visible += f.flush()
+        self.assertEqual(visible, "The answer is 4.")
+        self.assertEqual(f.reasoning, "Let me think. ")
+
+    def test_assume_open_unterminated_is_all_reasoning(self):
+        f = ThinkTagFilter(assume_open=True)
+        visible = f.feed("thinking forever, no closer") + f.flush()
+        self.assertEqual(visible, "")
+        self.assertEqual(f.reasoning, "thinking forever, no closer")
+
 
 class _FakeSSEResponse:
     """Minimal stand-in for a streaming requests.Response."""
@@ -209,6 +233,23 @@ class TestOpenAIReasoningStream(unittest.TestCase):
     def test_plain_stream_unchanged(self):
         tokens = _collect_openai([_content("a"), _content("b")])
         self.assertEqual("".join(tokens), "ab")
+
+    def test_assume_reasoning_param_reaches_the_filter(self):
+        reasoning: dict = {}
+        fake = _FakeSSEResponse(
+            [_content("thinking hard</think>answer"), b"data: [DONE]"]
+        )
+        with mock.patch.object(streaming.requests, "post", return_value=fake):
+            tokens = list(streaming.stream_completion(
+                base_url="http://localhost:1234",
+                model="local-model",
+                user_message="hi",
+                backend="lmstudio",
+                reasoning_out=reasoning,
+                assume_reasoning=True,
+            ))
+        self.assertEqual("".join(t for t in tokens if t), "answer")
+        self.assertEqual(reasoning.get("text"), "thinking hard")
 
 
 class TestOmitsTemperature(unittest.TestCase):
