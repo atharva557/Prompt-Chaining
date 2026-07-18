@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "promptchain"
-version = "0.1.0"
+version = "0.1.1"
 description = "Load, unload, and swap any number of local LLMs (LM Studio, Ollama, llama.cpp, ...) with full client-side control — plus unified streaming for local and cloud backends and an MCP server so agents can manage your VRAM."
 readme = "README-pypi.md"
 requires-python = ">=3.10"
